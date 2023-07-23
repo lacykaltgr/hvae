@@ -1,6 +1,8 @@
 import logging
 import torch.distributions as dist
 from torch.utils.tensorboard import SummaryWriter
+import torch
+import numpy as np
 
 from hparams import *
 import os
@@ -231,6 +233,19 @@ def linear_temperature(min_temp, max_temp, n_layers):
         return slope * layer_i + min_temp
 
     return get_layer_temp
+
+
+def reshape_distribution(dist_list, variate_mask):
+    """
+    :param dist_list: n_layers, 2*  [ batch_size n_variates, H , W]
+    :return: Tensors  of shape batch_size, H, W ,n_variates, 2
+    H, W , n_variates will be different from each other in the list depending on which layer you are in.
+    """
+    dist = torch.stack(dist_list, dim=0)  # 2, batch_size, n_variates, H ,W
+    dist = dist[:, :, variate_mask, :, :]  # Only take effective variates
+    dist = torch.permute(dist, (1, 3, 4, 2, 0))  # batch_size, H ,W ,n_variates (subset), 2
+    # dist = torch.unbind(dist, dim=0)  # Return a list of tensors of length batch_size
+    return dist
 
 @torch.jit.script
 def gaussian_analytical_kl(mu1, mu2, logsigma1, logsigma2):

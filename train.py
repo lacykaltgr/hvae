@@ -3,14 +3,14 @@ from src.utils import create_checkpoint_manager_and_load_if_exists, create_tb_wr
 from src.elements.optimizers import get_optimizer
 from src.elements.schedules import get_schedule
 import os
+import torch
+import numpy as np
 
 local_rank = int(os.environ["LOCAL_RANK"])
 
-from models.TDVAE import hvae_model
-
 
 def main():
-    model = hvae_model
+    model = run_params.model
     with torch.no_grad():
         _ = model(torch.ones((1, data_params.channels, data_params.target_res, data_params.target_res)))
 

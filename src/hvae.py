@@ -1,10 +1,8 @@
 import copy
-
-from model import train
-from hparams import *
+from torch import nn
+from model import train, reconstruct, generate, encode, compute_per_dimension_divergence_stats
+import torch
 from block import DecBlock, EncBlock
-from elements.optimizers import get_optimizer
-from elements.schedules import get_schedule
 
 
 def propogate(x, blocks, method_name, params, **kwparams):
@@ -37,20 +35,21 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, decoder_blocks, out_net):
         super(Decoder, self).__init__()
-        self.decoder_blocks = decoder_blocks
+        self._decoder_blocks = decoder_blocks
         self.out_net = out_net
         self.bias_xs = nn.ParameterList()  # for unconditional generation
 
     def forward(self, activations, get_latents=False):
-        stats = []
-        xs = {a.shape[2]: a for a in self.bias_xs}
-        xs, computed = propogate(xs, self.decoder_blocks, "forward", [activations], get_latents=get_latents)
+        xs = torch.tile(self.trainable_h, (activations[0].size()[0], 1, 1, 1))
+        result, _ = propogate(xs, self._decoder_blocks, "forward", [activations], get_latents=get_latents)
+        xs, stats = result
         return xs, stats
 
-    def forward_uncond(self, n, t=None):
-        xs = {a.shape[2]: a.repeat(n, 1, 1, 1) for a in self.bias_xs}
-        xs = propogate(xs, self.decoder_blocks, "forward_uncond", [t])
-        return xs
+    def sample_from_prior(self, batch_size, temperatures):
+        with torch.no_grad():
+            y = torch.tile(self.trainable_h, (batch_size, 1, 1, 1))
+            y, _ = propogate(y, self._decoder_blocks, "sample_from_prior", [temperatures])
+        return y
 
 
 class hVAE(nn.Module):
@@ -77,10 +76,17 @@ class hVAE(nn.Module):
                     lambda x: custom_ops[operation](x, None, blocks)) \
                 if callable(custom_ops[operation]) else None
 
-    def reconstruct(self, x):
-        latents = self.encoder(x)
-        reconstructions, _ = self.decoder(latents)
-        return self.decoder.out_net.sample(reconstructions)
+    def reconstruct(self, dataset,artifacts_folder=None, latents_folder=None):
+        return reconstruct(dataset, self, artifacts_folder, latents_folder)
+
+    def generate(self):
+        return generate(self)
+
+    def encode(self, dataset, latents_folder=None):
+        return encode(dataset, self, latents_folder)
+
+    def kldiv_stats(self, dataset):
+        return compute_per_dimension_divergence_stats(dataset, self)
 
     def train_model(self, optimizer, schedule,
                     train_loader, val_loader, checkpoint,
@@ -89,26 +95,17 @@ class hVAE(nn.Module):
               train_loader, val_loader, checkpoint['global_step'],
               writer_train, writer_val, checkpoint_path, self.device, local_rank)
 
-    def forward(self, x, x_target):
+    def sample(self, logits):
+        from model import sample_from_mol
+        return sample_from_mol(logits)
+
+    def sample_from_prior(self, batch_size, temperatures):
+        return self.decoder.sample_from_prior(batch_size, temperatures)
+
+    def forward(self, x):
         activations = self.encoder(x)
         px_z, stats = self.decoder(activations)
-        distortion_per_pixel = self.decoder.out_net.nll(px_z, x_target)
-        rate_per_pixel = torch.zeros_like(distortion_per_pixel)
-        ndims = np.prod(x.shape[1:])
-        for statdict in stats:
-            rate_per_pixel += statdict['kl'].sum(dim=(1, 2, 3))
-        rate_per_pixel /= ndims
-        elbo = (distortion_per_pixel + rate_per_pixel).mean()
-        return dict(elbo=elbo, distortion=distortion_per_pixel.mean(), rate=rate_per_pixel.mean())
-
-    def forward_get_latents(self, x):
-        activations = self.encoder(x)
-        _, stats = self.decoder.forward(activations, get_latents=True)
-        return stats
-
-    def forward_uncond_samples(self, n_batch, t=None):
-        px_z = self.decoder.forward_uncond(n_batch, t=t)
-        return self.decoder.out_net.sample(px_z)
+        return px_z, stats
 
     def visualize_graph(self):
         import networkx as nx

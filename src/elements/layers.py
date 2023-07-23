@@ -252,3 +252,153 @@ class Conv2d(nn.Conv2d):
         return x
 
 
+class UpsampleModule(nn.Module):
+    """Convolutional decoder.
+
+    If `method` is 'deconv' apply transposed convolutions with stride 2,
+    otherwise apply the `method` upsampling function and then smooth with a
+    stride 1x1 convolution.
+
+    Params:
+    -------
+    filters: list, where the first element is the number of filters of the initial
+      MLP layer and the remaining elements are the number of filters of the
+      upsampling layers.
+    kernel_size: the size of the convolutional kernels. The same size will be
+      used in all convolutions.
+    activation: an activation function, applied to all layers but the last.
+    dec_up_strides: list, the upsampling factors of each upsampling convolutional
+      layer.
+    enc_conv_shapes: list, the shapes of the input and of all the intermediate
+      feature maps of the convolutional layers in the encoder.
+    n_c: the number of output channels.
+    """
+
+    def __init__(self,
+                 filters,
+                 kernel_size,
+                 activation,
+                 dec_up_strides,
+                 enc_conv_shapes,
+                 n_c,
+                 method='nn',
+                 name='upsample_module'):
+        super(UpsampleModule, self).__init__(name=name)
+
+        assert len(filters) == len(dec_up_strides) + 1, (
+                'The decoder\'s filters should contain one element more than the '
+                'decoder\'s up stride list, but has %d elements instead of %d.\n'
+                'Decoder filters: %s\nDecoder up strides: %s' %
+                (len(filters), len(dec_up_strides) + 1, str(filters),
+                 str(dec_up_strides)))
+
+        self._filters = filters
+        self._kernel_size = kernel_size
+        self._activation = activation
+
+        self._dec_up_strides = dec_up_strides
+        self._enc_conv_shapes = enc_conv_shapes
+        self._n_c = n_c
+        if method == 'deconv':
+            self._conv_layer = tf.layers.Conv2DTranspose
+            self._method = method
+        else:
+            self._conv_layer = tf.layers.Conv2D
+            self._method = getattr(tf.image.ResizeMethod, method.upper())
+        self._method_str = method.capitalize()
+
+    def _build(self, z, is_training=True, test_local_stats=True, use_bn=False):
+        batch_norm_args = {
+            'is_training': is_training,
+            'test_local_stats': test_local_stats
+        }
+
+        method = self._method
+        # Cycle over the encoder shapes backwards, to build a symmetrical decoder.
+        enc_conv_shapes = self._enc_conv_shapes[::-1]
+        strides = self._dec_up_strides
+        # We store the heights and widths of the encoder feature maps that are
+        # unique, i.e., the ones right after a layer with stride != 1. These will be
+        # used as a target to potentially crop the upsampled feature maps.
+        unique_hw = np.unique([(el[1], el[2]) for el in enc_conv_shapes], axis=0)
+        unique_hw = unique_hw.tolist()[::-1]
+        unique_hw.pop()  # Drop the initial shape
+
+        # The first filter is an MLP.
+        mlp_filter, conv_filters = self._filters[0], self._filters[1:]
+        # The first shape is used after the MLP to go to 4D.
+
+        layers = [z]
+        # The shape of the first enc is used after the MLP to go back to 4D.
+        dec_mlp = snt.nets.MLP(
+            name='dec_mlp_projection',
+            output_sizes=[mlp_filter, np.prod(enc_conv_shapes[0][1:])],
+            use_bias=not use_bn,
+            activation=self._activation,
+            activate_final=True)
+
+        upsample_mlp_flat = dec_mlp(z)
+        if use_bn:
+            upsample_mlp_flat = snt.BatchNorm(scale=True)(upsample_mlp_flat,
+                                                          **batch_norm_args)
+        layers.append(upsample_mlp_flat)
+        upsample = tf.reshape(upsample_mlp_flat, enc_conv_shapes[0])
+        layers.append(upsample)
+
+        for i, (filter_i, stride_i) in enumerate(zip(conv_filters, strides), 1):
+            if method != 'deconv' and stride_i > 1:
+                upsample = tf.image.resize_images(
+                    upsample, [stride_i * el for el in upsample.shape.as_list()[1:3]],
+                    method=method,
+                    name='upsample_' + str(i))
+            upsample = self._conv_layer(
+                filters=filter_i,
+                kernel_size=self._kernel_size,
+                padding='same',
+                use_bias=not use_bn,
+                activation=self._activation,
+                strides=stride_i if method == 'deconv' else 1,
+                name='upsample_conv_' + str(i))(
+                upsample)
+            if use_bn:
+                upsample = snt.BatchNorm(scale=True)(upsample, **batch_norm_args)
+            if stride_i > 1:
+                hw = unique_hw.pop()
+                upsample = utils.maybe_center_crop(upsample, hw)
+            layers.append(upsample)
+
+        # Final layer, no upsampling.
+        x_logits = nn.Conv2d(
+            filters=self._n_c,
+            kernel_size=self._kernel_size,
+            padding='same',
+            use_bias=not use_bn,
+            activation=None,
+            strides=1,
+            name='logits')(
+            upsample)
+        if use_bn:
+            x_logits = snt.BatchNorm(scale=True)(x_logits, **batch_norm_args)
+        layers.append(x_logits)
+
+        return x_logits
+
+class DmolNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.out_conv = get_conv(H.width, H.num_mixtures * 10, kernel_size=1, stride=1, padding=0)
+
+    def nll(self, px_z, x):
+        return discretized_mix_logistic_loss(x=x, l=self.forward(px_z), low_bit=self.H.dataset in ['ffhq_256'])
+
+    def forward(self, px_z):
+        xhat = self.out_conv(px_z)
+        return xhat.permute(0, 2, 3, 1)
+
+    def sample(self, px_z):
+        im = sample_from_discretized_mix_logistic(self.forward(px_z), self.H.num_mixtures)
+        xhat = (im + 1.0) * 127.5
+        xhat = xhat.detach().cpu().numpy()
+        xhat = np.minimum(np.maximum(0.0, xhat), 255.0).astype(np.uint8)
+        return xhat
+
