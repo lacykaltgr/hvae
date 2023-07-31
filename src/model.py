@@ -1,5 +1,4 @@
 import time
-import torch.distributed as dist
 import os
 from tqdm import tqdm
 
@@ -11,7 +10,7 @@ from utils import tensorboard_log, plot_image, get_variate_masks, write_image_to
 from hparams import *
 
 device = run_params.device
-
+gamma_schedule = GammaSchedule(max_steps=loss_params.gamma_max_steps)
 if loss_params.variation_schedule == 'Logistic':
     kldiv_schedule = LogisticBetaSchedule(
         activation_step=loss_params.vae_beta_activation_steps,
@@ -25,16 +24,30 @@ else:
     kldiv_schedule = lambda x: torch.as_tensor(1.)
 
 
-def compute_loss(targets, predictions, stats):
-    from elements.layers import DmolNet
-    distortion_per_pixel = DmolNet().nll(predictions, targets)
-    rate_per_pixel = torch.zeros_like(distortion_per_pixel)
-    ndims = np.prod(targets.shape[1:])
-    for statdict in stats:
-        rate_per_pixel += statdict['kl'].sum(dim=(1, 2, 3))
-    rate_per_pixel /= ndims
-    elbo = (distortion_per_pixel + rate_per_pixel).mean()
-    return dict(elbo=elbo, distortion=distortion_per_pixel.mean(), rate=rate_per_pixel.mean())
+def compute_loss(targets, predictions, kl_divs, step_n):
+    feature_matching_loss, avg_feature_matching_loss, means, log_scales = \
+        loss_params.reconstruction_loss(targets=targets, predictions=predictions)
+
+    global_variational_prior_losses = torch.stack(list(map(lambda x: x[0], kl_divs)), dim = 0)
+    avg_global_var_prior_losses = map(lambda x: x[1], kl_divs)
+    global_variational_prior_loss = torch.sum(global_variational_prior_losses) \
+        if not loss_params.use_gamma_schedule \
+        else gamma_schedule(global_variational_prior_losses,
+                                    avg_global_var_prior_losses,
+                                    step_n=step_n)
+    global_var_loss = kldiv_schedule(step_n) * global_variational_prior_loss  # beta
+    total_generator_loss = feature_matching_loss + global_var_loss
+    scalar = np.log(2.)
+    # True bits/dim kl div
+    kl_div = torch.sum(global_variational_prior_losses) / scalar
+    return dict(
+        elbo=total_generator_loss,
+        reconstruction_loss=feature_matching_loss,
+        avg_rec_loss=avg_feature_matching_loss,
+        avg_var_prior_losses=avg_global_var_prior_losses,
+        means=means,
+        log_scales=log_scales,
+        kl_div=kl_div)
 
 
 def _global_norm(model):
@@ -66,32 +79,16 @@ def gradient_skip(global_norm):
     else:
         skip = False
         gradient_skip_counter_delta = 0.
-
     return skip, gradient_skip_counter_delta
 
 
-def eval_step(model, inputs):
-    with torch.no_grad():
-        predictions, stats = model(inputs)
-        results = compute_loss(inputs, predictions, stats)
-        outputs = model.sample(predictions)
-    return outputs, results
-
-
-def reconstruction_step(model, inputs, variates_masks=None, mode='recon'):
+def reconstruction_step(model, inputs, variates_masks=None):
     model.eval()
     with torch.no_grad():
-        predictions, stats = model(inputs, variates_masks)
-
-        if mode == 'recon':
-            results = compute_loss(inputs, predictions, stats)
-            outputs = model.sample(predictions)
-
-            return outputs, stats
-        elif mode == 'encode':
-            return stats
-        else:
-            raise ValueError(f'Unknown Mode {mode}')
+        predictions, computed, kl_divs = model(inputs, variates_masks)
+        results = compute_loss(inputs, predictions, kl_divs)
+        outputs = model.sample(predictions)
+        return outputs, computed, results
 
 
 def reconstruct(test_dataset, model, artifacts_folder=None, latents_folder=None):
@@ -99,7 +96,6 @@ def reconstruct(test_dataset, model, artifacts_folder=None, latents_folder=None)
     if artifacts_folder is not None:
         artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/reconstructed')
         os.makedirs(artifacts_folder, exist_ok=True)
-
     if synthesis_params.mask_reconstruction:
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
         variate_masks = get_variate_masks(div_stats).astype(np.float32)
@@ -112,9 +108,11 @@ def reconstruct(test_dataset, model, artifacts_folder=None, latents_folder=None)
     io_pairs = list()
     for step, inputs in enumerate(test_dataset):
         inputs = inputs.to(device)
-        outputs, reconstruction_loss, kl_div = reconstruction_step(model, inputs, variates_masks=variate_masks)
+        outputs, _, loss = reconstruction_step(model, inputs, variates_masks=variate_masks)
         targets = inputs
 
+        reconstruction_loss = loss['reconstruction_loss']
+        kl_div = loss['kl_div']
         nelbo = reconstruction_loss + kl_div
         ssim_per_batch = ssim_metric(targets, outputs, global_batch_size=synthesis_params.batch_size)
         ssims += ssim_per_batch
@@ -146,15 +144,17 @@ def reconstruct(test_dataset, model, artifacts_folder=None, latents_folder=None)
 
 
 def generation_step(model, temperatures):
-    y, prior_zs = model.sample_from_prior(synthesis_params.batch_size, temperatures=temperatures)
-    outputs = model.sample(y)
-    return outputs, prior_zs
+    outputs, computed = model.sample_from_prior(synthesis_params.batch_size, temperatures=temperatures)
+    samples = model.sample(outputs)
+    return samples
 
 
 def generate(model):
     all_outputs = list()
     # Generation supports runs with several temperature configs to avoid rebuilding each time
     for temp_i, temperature_setting in enumerate(synthesis_params.temperature_settings):
+        """
+        TODO
         print(f'Generating for temperature setting {temp_i:01d}')
         # Make per layer temperatures of the setting
         if isinstance(temperature_setting, list):
@@ -176,27 +176,25 @@ def generate(model):
 
         else:
             raise ValueError(f'Temperature Setting {temperature_setting} not interpretable!!')
-
+        """
+        temperatures = None
         temp_outputs = list()
         for step in range(synthesis_params.n_generation_batches):
-            outputs, prior_zs = generation_step(model, temperatures=temperatures)
+            outputs = generation_step(model, temperatures=temperatures)
             temp_outputs.append(outputs)
 
-            print(f'Step: {step:04d} ', end='\r')
-            print()
+            print(f'Step: {step:04d}', end='\r')
         all_outputs.append(temp_outputs)
     return all_outputs
 
 
 def encode(dataset, model, latents_folder=None):
 
-    #TODO: nem látom miért kéne ezt elvárni
-    if not os.path.isfile(os.path.join(latents_folder, 'div_stats.npy')):
-        raise FileNotFoundError('No div_stats found')
-
-    # Load div stats from disk
-    div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
-    variate_masks = get_variate_masks(div_stats)
+    if os.path.isfile(os.path.join(latents_folder, 'div_stats.npy')):
+        div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
+        variate_masks = get_variate_masks(div_stats)
+    else:
+        variate_masks = None
 
     encodings = {'images': {}, 'latent_codes': {}}
     model = model.eval()
@@ -204,9 +202,10 @@ def encode(dataset, model, latents_folder=None):
     with torch.no_grad():
         for step, (inputs, filenames) in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
-            # posterior_dist_list : n_layers, 2 (mean,std), batch_size, n_variates, H, W (List of List of Tensors)
-            posterior_dist_list = reconstruction_step(model, inputs, variates_masks=variate_masks, mode='encode')
 
+            _, computed, _ = reconstruction_step(model, inputs, variates_masks=variate_masks)
+
+            """
             # If the mask states all variables of a layer are not effective we don't collect any latents from that layer
             # n_layers , batch_size, [H, W, n_variates, 2]
             dist_dict = {}
@@ -215,23 +214,8 @@ def encode(dataset, model, latents_folder=None):
                     x = reshape_distribution(dist_list, variate_mask).detach().cpu().numpy()
                     v = {name: xa for name, xa in zip(filenames, list(x))}
                     dist_dict[i] = v
-
-            if encodings['latent_codes'] == {}:
-                # Put first batch
-                encodings['latent_codes'] = dist_dict
-            else:
-                # Update files of each layer
-                assert dist_dict.keys() == encodings['latent_codes'].keys()
-                for layer_key, layer_dict in dist_dict.items():
-                    encodings['latent_codes'][layer_key].update(layer_dict)
-
-            inputs = inputs.detach().cpu().numpy()
-            assert len(filenames) == len(inputs)
-            for filename, input_image in zip(filenames, inputs):
-                encodings['images'][filename] = input_image
-
-    encodings['latent_codes'] = transpose_dicts(encodings['latent_codes'])
-    return encodings
+            """
+    return computed
 
 
 def update_ema(vae, ema_vae, ema_rate):
@@ -241,22 +225,15 @@ def update_ema(vae, ema_vae, ema_rate):
         p2.data.add_(p1.data * (1 - ema_rate))
 
 
-def _compiled_train_step(model, inputs):
-    predictions, stats = model(inputs)
-    results = compute_loss(inputs, predictions, stats)
+def train_step(model, ema_model, optimizer, inputs):
+    predictions, _, kl_divs = model(inputs)
+    outputs = model.sample(predictions)
+    results = compute_loss(inputs, predictions, kl_divs)
 
     results["elbo"].backward()
 
-    total_norm = gradient_clip(model)
-    skip, gradient_skip_counter_delta = gradient_skip(total_norm)
-
-    outputs = model.module.top_down.sample(predictions)
-
-    return outputs, results, total_norm, gradient_skip_counter_delta, skip
-
-
-def train_step(model, ema_model, optimizer, inputs):
-    outputs, results, global_norm, gradient_skip_counter_delta, skip = _compiled_train_step(model, inputs)
+    global_norm = gradient_clip(model)
+    skip, gradient_skip_counter_delta = gradient_skip(global_norm)
 
     if not skip:
         optimizer.step()
@@ -267,53 +244,42 @@ def train_step(model, ema_model, optimizer, inputs):
 
 
 def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, checkpoint_start, tb_writer_train,
-          tb_writer_val, checkpoint_path, device, rank):
+          tb_writer_val, checkpoint_path, device):
     ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
+
     global_step = checkpoint_start
     gradient_skip_counter = 0.
 
     model.train()
-
-    # let all processes sync up before starting with a new epoch of models
     total_train_epochs = int(np.ceil(train_params.total_train_steps / len(train_dataset)))
     val_epoch = 0
-    for epoch in range(0, total_train_epochs):
-        train_dataset.sampler.set_epoch(epoch)
-        if rank == 0:
-            print(f'\nEpoch: {epoch + 1}')
-        dist.barrier()
+    for epoch in range(total_train_epochs):
         for batch_n, train_inputs in enumerate(train_dataset):
-            # update global step
             global_step += 1
-
             train_inputs = train_inputs.to(device, non_blocking=True)
-            # torch.cuda.synchronize()
+
             start_time = time.time()
             train_outputs, results, global_norm, gradient_skip_counter_delta = train_step(
                 model, ema_model, optimizer, train_inputs)
-            # torch.cuda.synchronize()
             end_time = round((time.time() - start_time), 2)
             schedule.step()
 
             gradient_skip_counter += gradient_skip_counter_delta
-
-            train_var_loss = np.sum([v.detach().cpu() for v in train_global_varprior_losses])
+            train_var_loss = np.sum([v.detach().cpu() for v in results["avg_var_prior_losses"]])
             train_nelbo = results["elbo"]
-            # global_norm = global_norm / (hparams.data.target_res * hparams.data.target_res * hparams.data.channels)
-            if rank == 0:
-                print(global_step,
-                      ('Time/Step (sec)', end_time),
-                      ('Reconstruction Loss', round(train_feature_matching_loss.detach().cpu().item(), 3)),
-                      ('KL loss', round(train_kl_div.detach().cpu().item(), 3)),
-                      ('nelbo', round(train_nelbo.detach().cpu().item(), 4)),
-                      ('average KL loss', round(train_var_loss.item(), 3)),
-                      ('Beta', round(kldiv_schedule(global_step).detach().cpu().item(), 4)),
-                      ('N° active groups', np.sum([v.detach().cpu() >= eval_params.latent_active_threshold
-                                                   for v in train_global_varprior_losses])),
-                      ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
-                      ('GradSkipCount', gradient_skip_counter),
-                      # ('learning_rate', optimizer.param_groups[0]['lr']),
-                      end="\r")
+
+            print(global_step,
+                  ('Time/Step (sec)', end_time),
+                  ('Reconstruction Loss', round(results["distortion"].detach().cpu().item(), 3)),
+                  ('KL loss', round(results["rate"].detach().cpu().item(), 3)),
+                  ('nelbo', round(train_nelbo.detach().cpu().item(), 4)),
+                  ('average KL loss', round(train_var_loss.item(), 3)),
+                  ('Beta', round(kldiv_schedule(global_step).detach().cpu().item(), 4)),
+                  ('N° active groups', np.sum([v.detach().cpu() >= eval_params.latent_active_threshold
+                                              for v in results["avg_var_prior_losses"]])),
+                  ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
+                  ('GradSkipCount', gradient_skip_counter),
+                  end="\r")
 
             """
             CHECKPOINTING AND EVALUATION
@@ -322,20 +288,19 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 model.eval()
                 # Compute SSIM at the end of the global_step
                 train_ssim = ssim_metric(train_inputs, train_outputs,
-                                         global_batch_size=train_params.batch_size // train_params.num_gpus)
-                if rank == 0:
-                    train_losses = {'reconstruction_loss': train_feature_matching_loss,
-                                    'kl_div': train_kl_div,
-                                    'average_kl_div': train_var_loss,
-                                    'variational_beta': kldiv_schedule(global_step),
-                                    'ssim': train_ssim,
-                                    'nelbo': train_nelbo}
+                                         global_batch_size=train_params.batch_size)
+                train_losses = {'reconstruction_loss': results["reconstruction_loss"],
+                                'kl_div': results["kl_div"],
+                                'average_kl_div': train_var_loss,
+                                'variational_beta': kldiv_schedule(global_step),
+                                'ssim': train_ssim,
+                                'nelbo': train_nelbo}
 
-                    train_losses.update({f'latent_kl_{i}': v for i, v in enumerate(train_global_varprior_losses)})
+                train_losses.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
 
-                    print(
-                        f'\nTrain Stats for global_step {global_step} | NELBO {train_nelbo:.6f} | '
-                        f'SSIM: {train_ssim:.6f}')
+                print(
+                    f'\nTrain Stats for global_step {global_step} | NELBO {train_nelbo:.6f} | '
+                    f'SSIM: {train_ssim:.6f}')
 
                 # Evaluate model
                 val_feature_matching_losses = 0
@@ -343,75 +308,65 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 val_ssim = 0
                 val_kl_divs = 0
                 val_epoch += 1
-
-                val_dataset.sampler.set_epoch(val_epoch)
                 for val_step, val_inputs in enumerate(val_dataset):
-                    # Val inputs contains val_Data and filenames
                     val_inputs = val_inputs.to(device, non_blocking=True)
-                    val_outputs, results, val_means, val_log_scales = eval_step(model, inputs=val_inputs)
+                    val_outputs, val_computed, val_results = reconstruction_step(model, inputs=val_inputs)
 
                     val_ssim_per_batch = ssim_metric(val_inputs, val_outputs,
                                                      global_batch_size=eval_params.batch_size // train_params.num_gpus)
 
-                    val_feature_matching_losses += val_feature_matching_loss
+                    val_feature_matching_losses += val_results["reconstruction_loss"]
                     val_ssim += val_ssim_per_batch
-                    val_kl_divs += val_kl_div
+                    val_kl_divs += val_results["kl_div"]
 
                     if val_global_varprior_losses is None:
-                        val_global_varprior_losses = val_global_varprior_loss
+                        val_global_varprior_losses = val_results["avg_var_prior_losses"]
                     else:
                         val_global_varprior_losses = [u + v for u, v in
-                                                      zip(val_global_varprior_losses, val_global_varprior_loss)]
+                                                      zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
 
                 val_feature_matching_loss = val_feature_matching_losses / (val_step + 1)
                 val_ssim = val_ssim / (val_step + 1)
                 val_kl_div = val_kl_divs / (val_step + 1)
 
                 val_global_varprior_losses = [v / (val_step + 1) for v in val_global_varprior_losses]
-
                 val_varprior_loss = np.sum([v.detach().cpu() for v in val_global_varprior_losses])
                 val_nelbo = val_kl_div + val_feature_matching_loss
 
-                if rank == 0:
-                    val_losses = {'reconstruction_loss': val_feature_matching_loss,
-                                  'kl_div': val_kl_div,
-                                  'average_kl_div': val_varprior_loss,
-                                  'ssim': val_ssim,
-                                  'nelbo': val_nelbo}
+                val_losses = {'reconstruction_loss': val_feature_matching_loss,
+                              'kl_div': val_kl_div,
+                              'average_kl_div': val_varprior_loss,
+                              'ssim': val_ssim,
+                              'nelbo': val_nelbo}
+                val_losses.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
 
-                    val_losses.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
+                print(
+                    f'Validation Stats for global_step {global_step} |'
+                    f' Reconstruction Loss {val_feature_matching_loss:.4f} |'
+                    f' KL Div {val_kl_div:.4f} |'f'NELBO {val_nelbo:.6f} |'
+                    f'SSIM: {val_ssim:.6f}')
 
-                    print(
-                        f'Validation Stats for global_step {global_step} |'
-                        f' Reconstruction Loss {val_feature_matching_loss:.4f} |'
-                        f' KL Div {val_kl_div:.4f} |'f'NELBO {val_nelbo:.6f} |'
-                        f'SSIM: {val_ssim:.6f}')
+                # Save checkpoint (only if better than best)
+                print(f'Saving checkpoint for global_step {global_step}..')
 
-                    # Save checkpoint (only if better than best)
-                    print(f'Saving checkpoint for global_step {global_step}..')
+                torch.save({
+                    'global_step': global_step,
+                    'model_state_dict': model.module.state_dict(),
+                    'ema_model_state_dict': ema_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': schedule.state_dict()
+                }, checkpoint_path)
 
-                    torch.save({
-                        'global_step': global_step,
-                        'model_state_dict': model.module.state_dict(),
-                        'ema_model_state_dict': ema_model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': schedule.state_dict()
-                    }, checkpoint_path)
+                # Tensorboard logging
+                print('Logging to Tensorboard..')
+                train_losses['skips_count'] = gradient_skip_counter / train_params.total_train_steps
+                tensorboard_log(model, optimizer, global_step, tb_writer_train, train_losses, train_outputs, train_inputs, global_norm=global_norm)
+                tensorboard_log(model, optimizer, global_step, tb_writer_val, val_losses, val_outputs, val_inputs, means=val_results["means"], log_scales=val_results["log_scales"], mode='val')
 
-                    # Tensorboard logging
-                    print('Logging to Tensorboard..')
-                    train_losses['skips_count'] = gradient_skip_counter / train_params.total_train_steps
-                    tensorboard_log(model, optimizer, global_step, tb_writer_train, train_losses, train_outputs,
-                                    train_inputs,
-                                    global_norm=global_norm)
-                    tensorboard_log(model, optimizer, global_step, tb_writer_val, val_losses, val_outputs, val_inputs,
-                                    means=val_means, log_scales=val_log_scales, mode='val')
-
-                    # Save artifacts
-                    plot_image(train_outputs[0], train_inputs[0], global_step, writer=tb_writer_train)
-                    plot_image(val_outputs[0], val_inputs[0], global_step, writer=tb_writer_val)
+                # Save artifacts
+                plot_image(train_outputs[0], train_inputs[0], global_step, writer=tb_writer_train)
+                plot_image(val_outputs[0], val_inputs[0], global_step, writer=tb_writer_val)
                 model.train()
-            dist.barrier()
 
             if global_step >= train_params.total_train_steps:
                 print(f'Finished training after {global_step} steps!')
@@ -436,7 +391,7 @@ def compute_per_dimension_divergence_stats(dataset, model):
     per_dim_divs /= (step + 1)
     return per_dim_divs
 
-
+"""
 def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
 
     def _compute_scales(logits):
@@ -496,4 +451,4 @@ def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
     x = torch.cat([x0, x1, x2], dim=1)  # B, C, H, W
     return x
 
-
+"""

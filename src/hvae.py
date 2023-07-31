@@ -2,7 +2,7 @@ import copy
 from torch import nn
 from model import train, reconstruct, generate, encode, compute_per_dimension_divergence_stats
 import torch
-from block import DecBlock, EncBlock
+from block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 
 
 def propogate(x, blocks, method_name, params, **kwparams):
@@ -29,7 +29,11 @@ class Encoder(nn.Module):
         self.encoder_blocks = encoder_blocks
 
     def forward(self, x):
-        return propogate(x, self.encoder_blocks, "forward")
+        computed = dict()
+        output = None
+        for block in self.encoder_blocks:
+            output, computed = block(computed)
+        return output, computed
 
 
 class Decoder(nn.Module):
@@ -37,46 +41,41 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self._decoder_blocks = decoder_blocks
         self.out_net = out_net
-        self.bias_xs = nn.ParameterList()  # for unconditional generation
 
-    def forward(self, activations, get_latents=False):
-        xs = torch.tile(self.trainable_h, (activations[0].size()[0], 1, 1, 1))
-        result, _ = propogate(xs, self._decoder_blocks, "forward", [activations], get_latents=get_latents)
-        xs, stats = result
-        return xs, stats
+    def forward(self, computed):
+        kl_divs = []
+        output = None
+        for block in self._decoder_blocks:
+            output, computed, kl_div = block(computed)
+            kl_divs.append(kl_div)
+        return output, computed, kl_divs
 
     def sample_from_prior(self, batch_size, temperatures):
         with torch.no_grad():
-            y = torch.tile(self.trainable_h, (batch_size, 1, 1, 1))
-            y, _ = propogate(y, self._decoder_blocks, "sample_from_prior", [temperatures])
-        return y
+            for i, block in enumerate(self._decoder_blocks):
+                output, computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
+        return output, computed
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks, name, device, **custom_ops):
+    def __init__(self, blocks, name, device):
         super(hVAE, self).__init__(name=name)
 
-        encoder_blocks = list()
-        decoder_blocks = list()
         for block in blocks:
-            if isinstance(block, EncBlock):
-                encoder_blocks.append(block)
-            elif isinstance(block, DecBlock):
-                decoder_blocks.append(block)
-            else:
-                raise ValueError(f'Unknown block type {type(block)}')
+            blocks[block].set_output(block)
+        encoder_blocks = filter(lambda block: isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)), blocks)
+        decoder_blocks = filter(lambda block: isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)), blocks)
+
         self.encoder = Encoder(encoder_blocks)
         self.decoder = Decoder(decoder_blocks)
         self.ema_model = copy.deepcopy(self)
 
         self.device = device
 
-        for operation in custom_ops:
-            setattr(self, operation,
-                    lambda x: custom_ops[operation](x, None, blocks)) \
-                if callable(custom_ops[operation]) else None
+    def compute(self, block_name):
+        pass
 
-    def reconstruct(self, dataset,artifacts_folder=None, latents_folder=None):
+    def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
         return reconstruct(dataset, self, artifacts_folder, latents_folder)
 
     def generate(self):
@@ -97,15 +96,17 @@ class hVAE(nn.Module):
 
     def sample(self, logits):
         from model import sample_from_mol
-        return sample_from_mol(logits)
+        samples = sample_from_mol(logits)
+        return samples
 
     def sample_from_prior(self, batch_size, temperatures):
-        return self.decoder.sample_from_prior(batch_size, temperatures)
+        output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
+        return output, computed
 
     def forward(self, x):
-        activations = self.encoder(x)
-        px_z, stats = self.decoder(activations)
-        return px_z, stats
+        _, computed = self.encoder(x)
+        output, computed, kl_divs = self.decoder(computed)
+        return output, computed, kl_divs
 
     def visualize_graph(self):
         import networkx as nx
@@ -144,3 +145,10 @@ class hVAE(nn.Module):
         nx.draw(G, nodelist=nodes, pos=pos, edgelist=decoder_edges, edge_color="b", width=2, node_size=2000,
                 with_labels=True, node_color="lightblue", ax=plt.gca(), arrowstyle="->")
         plt.show()
+
+    def save(self, path):
+        torch.save(self.state_dict(), path)
+
+    @staticmethod
+    def load(self, path) -> None:
+        self.load_state_dict(torch.load(path))

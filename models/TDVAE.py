@@ -1,7 +1,8 @@
 import torch.nn
 
-from src.block import EncBlock, DecBlock
+from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
 from src.hvae import hVAE as hvae
+import data
 
 
 def _model():
@@ -10,35 +11,24 @@ def _model():
                            else "cpu")
 
     _blocks = dict(
-        cluster_encoder=EncBlock(mlp_params,
-                                 input="x", output="y"),
-        latent_encoder=EncBlock(cnn_params,
-                                input=["x", "y"], output="z1", log_output=True),
-        latent_decoder=DecBlock(cnn_params,
-                                prior_net="conv",
-                                posterior_net="conv",
-                                encoder="mlp",
-                                z_projection="conv",
-                                zdim=16,
-                                input="y", output="z"),
-        data_decoder=DecBlock(mlp_params,
-                              prior_net="conv",
-                              posterior_net="conv",
-                              encoder="mlp",
-                              z_projection="conv",
-                              zdim=16,
-                              input="z", output="x")
+        x=InputBlock(),
+        hiddens=EncBlock(
+            model=cnn_params,
+            input="x", log_output=True),
+        y=TopBlock(  # adds to KL loss
+            model=mlp_params,
+            input="hiddens"),
+        z=DecBlock(mlp_params,
+                   input="y",
+                   condition="hiddens",
+                   prior_net=z_prior_net_params,
+                   posterior_net=z_posterior_net_params, ),
+        x_hat=OutputBlock(),
     )
-
-    # custom function
-    def _infer_latent(x, log, **ops):
-        z1 = ops["cluster_encoder"](x)
-        return z1
 
     __model = hvae(
         blocks=_blocks,
         name="hvae",
-        infer_latent=_infer_latent,
         device=_device
     )
 
@@ -221,7 +211,8 @@ synthesis_params = Hyperparams(
     #     - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
     #                             group)
     #     - A list of size len(down_strides): Each element of the list defines the temperature for their respective top-down blocks.
-    temperature_settings = [0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.), ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
+    temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
+                          ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
     # Temperature of the output layer (usually kept at 1. for extra realism)
     output_temperature=1.,
 
@@ -360,20 +351,17 @@ shared_encoder_params = Hyperparams(
     activation=torch.nn.ReLU
 )
 
-
 cluster_encoder_params = Hyperparams(
     type='mlp',
     n_hiddens=[1000, 500, 250],
     activation=torch.nn.ReLU
 )
 
-
 latent_encoder_params = Hyperparams(
     type='mlp',
     n_hiddens=[250, 500, 1000, 2000],
     activation=torch.nn.ReLU,
 )
-
 
 latent_decoder_params = Hyperparams(
     type='mlp',
@@ -387,7 +375,6 @@ data_decoder_params = Hyperparams(
     activation=torch.nn.ReLU
 )
 
-
 z1_distr = Hyperparams(
     distr='laplace',
     sigma_nonlin='exp',
@@ -399,5 +386,3 @@ z2_distr = Hyperparams(
     sigma_nonlin='exp',
     sigma_param='var'
 )
-
-

@@ -7,6 +7,8 @@ from ..utils import scale_pixels, effective_pixels
 from typing import List
 from torch.distributions.bernoulli import Bernoulli
 
+from hparams import *
+
 
 class BernoulliLoss(nn.Module):
     def __init__(self):
@@ -49,7 +51,7 @@ class DiscMixLogistic(nn.Module):
         super(DiscMixLogistic, self).__init__()
 
         # Only works for when images are [0., 1.] normalized for now
-        self.num_classes = 2. ** hparams.data.num_bits - 1.
+        self.num_classes = 2. ** data_params.num_bits - 1.
         self.min_pix_value = scale_pixels(0.)
         self.max_pix_value = scale_pixels(255.)
 
@@ -134,36 +136,35 @@ class DiscMixLogistic(nn.Module):
 
 
 @torch.jit.script
-def calculate_std_loss(p: List[torch.Tensor], q: List[torch.Tensor]):
-    q_std = q[1]
-    p_std = p[1]
-    term1 = (p[0] - q[0]) / q_std
-    term2 = p_std / q_std
+def calculate_std_loss(p_mu, q_mu, p_sigma, q_sigma):
+    term1 = (p_mu - q_mu) / q_sigma
+    term2 = p_sigma / q_sigma
     loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
     return loss
 
 
-def calculate_logstd_loss(p, q):
-    q_logstd = q[1]
-    p_logstd = p[1]
+@torch.jit.script
+def calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma):
+    q_logstd = q_sigma
+    p_logstd = p_sigma
 
-    p_std = torch.exp(hparams.model.gradient_smoothing_beta * p_logstd)
-    inv_q_std = torch.exp(-hparams.model.gradient_smoothing_beta * q_logstd)
+    p_std = torch.exp(loss_params.gradient_smoothing_beta * p_logstd)
+    inv_q_std = torch.exp(-loss_params.gradient_smoothing_beta * q_logstd)
 
-    term1 = (p[0] - q[0]) * inv_q_std
+    term1 = (p_mu - q_mu) * inv_q_std
     term2 = p_std * inv_q_std
     loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
     return loss
 
 
 class KLDivergence(nn.Module):
-    def forward(self, p, q, global_batch_size):
-        if hparams.model.distribution_base == 'std':
-            loss = calculate_std_loss(p, q)
-        elif hparams.model.distribution_base == 'logstd':
-            loss = calculate_logstd_loss(p, q)
+    def forward(self, p_mu, q_mu, p_sigma, q_sigma, global_batch_size):
+        if loss_params.model.distribution_base == 'std':
+            loss = calculate_std_loss(p_mu, q_mu, p_sigma, q_sigma)
+        elif loss_params.distribution_base == 'logstd':
+            loss = calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma)
         else:
-            raise ValueError(f'distribution base {hparams.model.distribution_base} not known!!')
+            raise ValueError(f'distribution base {loss_params.distribution_base} not known!!')
 
         mean_axis = list(range(1, len(loss.size())))
         per_example_loss = torch.sum(loss, dim=mean_axis)
@@ -175,8 +176,8 @@ class KLDivergence(nn.Module):
         scalar = global_batch_size * effective_pixels()
 
         loss = torch.sum(per_example_loss) / scalar
-        avg_loss = torch.sum(avg_per_example_loss) / (
-                global_batch_size * np.log(2))  # divide by ln(2) to convert to KL rate (average space bits/dim)
+        # divide by ln(2) to convert to KL rate (average space bits/dim)
+        avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
 
         return loss, avg_loss
 
@@ -268,29 +269,6 @@ class StructureSimilarityIndexMap(nn.Module):
 
         loss = torch.sum(per_example_ssim) / global_batch_size
         return loss
-
-
-@torch.jit.script
-def calculate_std_loss(p: List[torch.Tensor], q: List[torch.Tensor]):
-    q_std = q[1]
-    p_std = p[1]
-    term1 = (p[0] - q[0]) / q_std
-    term2 = p_std / q_std
-    loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
-    return loss
-
-
-def calculate_logstd_loss(p, q):
-    q_logstd = q[1]
-    p_logstd = p[1]
-
-    p_std = torch.exp(hparams.model.gradient_smoothing_beta * p_logstd)
-    inv_q_std = torch.exp(-hparams.model.gradient_smoothing_beta * q_logstd)
-
-    term1 = (p[0] - q[0]) * inv_q_std
-    term2 = p_std * inv_q_std
-    loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
-    return loss
 
 
 class KLDivergenceStats(KLDivergence):

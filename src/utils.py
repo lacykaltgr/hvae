@@ -217,15 +217,6 @@ def get_variate_masks(stats):
     return stats > thresh
 
 
-def transpose_dicts(dct):
-    from collections import defaultdict
-    d = defaultdict(dict)
-    for key1, inner in dct.items():
-        for key2, value in inner.items():
-            d[key2][key1] = value
-    return d
-
-
 def linear_temperature(min_temp, max_temp, n_layers):
     slope = (max_temp - min_temp) / n_layers
 
@@ -246,13 +237,3 @@ def reshape_distribution(dist_list, variate_mask):
     dist = torch.permute(dist, (1, 3, 4, 2, 0))  # batch_size, H ,W ,n_variates (subset), 2
     # dist = torch.unbind(dist, dim=0)  # Return a list of tensors of length batch_size
     return dist
-
-@torch.jit.script
-def gaussian_analytical_kl(mu1, mu2, logsigma1, logsigma2):
-    return -0.5 + logsigma2 - logsigma1 + 0.5 * (logsigma1.exp() ** 2 + (mu1 - mu2) ** 2) / (logsigma2.exp() ** 2)
-
-
-@torch.jit.script
-def draw_gaussian_diag_samples(mu, logsigma):
-    eps = torch.empty_like(mu).normal_(0., 1.)
-    return torch.exp(logsigma) * eps + mu
