@@ -3,6 +3,7 @@ from torch import nn
 from hparams import Hyperparams
 
 
+# TODO
 def get_model(model):
     if model is None:
         return None

@@ -11,7 +11,7 @@ def _model():
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
-            input="x"
+            input_id="x"
         ),
         y=TopBlock(
             net=hiddens_to_y_net,
@@ -21,7 +21,7 @@ def _model():
         z=DecBlock(
             prior_net=z_prior_net,
             posterior_net=z_posterior_net,
-            input="y",
+            input_id="y",
             condition="hiddens",
         ),
         z_skip=ConcatBlock(
@@ -30,7 +30,7 @@ def _model():
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
-            input="z_skip",
+            input_id="z_skip",
         ),
     )
 

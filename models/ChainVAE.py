@@ -11,7 +11,7 @@ def _model():
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
-            input="x"
+            input_id="x"
         ),
         y=TopBlock(
             net=hiddens_to_y_net,
@@ -24,7 +24,7 @@ def _model():
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
-            input="z"
+            input_id="z"
         ),
     )
 

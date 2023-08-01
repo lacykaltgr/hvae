@@ -1,6 +1,9 @@
 import time
 import os
+
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+from torch import tensor
 
 from src.elements.losses import StructureSimilarityIndexMap
 from src.elements.schedules import *
@@ -8,6 +11,8 @@ from utils import tensorboard_log, plot_image, get_variate_masks, write_image_to
 from block import DecBlock, TopBlock
 
 from hparams import *
+from hparams import model
+from torch.utils.tensorboard import SummaryWriter
 
 device = model_params.device
 gamma_schedule = GammaSchedule(max_steps=loss_params.gamma_max_steps) \
@@ -26,12 +31,12 @@ kldiv_schedule = \
         else lambda x: torch.as_tensor(1.)
 
 
-def compute_loss(targets, predictions, kl_divs, step_n):
+def compute_loss(targets: tensor, predictions: tensor, kl_divs: list, step_n: int) -> dict:
     feature_matching_loss, avg_feature_matching_loss, means, log_scales = \
         loss_params.reconstruction_loss(targets=targets, predictions=predictions)
 
-    global_variational_prior_losses = torch.stack(list(map(lambda x: x[0], kl_divs)), dim=0)
-    avg_global_var_prior_losses = map(lambda x: x[1], kl_divs)
+    global_variational_prior_losses = torch.stack(list(map(lambda x: x[0], list(filter(lambda x: x is not None, kl_divs)))), dim=0)
+    avg_global_var_prior_losses = list(map(lambda x: x[1], list(filter(lambda x: x is not None, kl_divs))))
     global_variational_prior_loss = torch.sum(global_variational_prior_losses) \
         if not loss_params.use_gamma_schedule \
         else gamma_schedule(global_variational_prior_losses,
@@ -52,8 +57,8 @@ def compute_loss(targets, predictions, kl_divs, step_n):
         kl_div=kl_div)
 
 
-def global_norm(model):
-    parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
+def global_norm(net: model):
+    parameters = [p for p in net.parameters() if p.grad is not None and p.requires_grad]
     if len(parameters) == 0:
         total_norm = torch.tensor(0.0)
     else:
@@ -62,12 +67,12 @@ def global_norm(model):
     return total_norm
 
 
-def gradient_clip(model):
+def gradient_clip(net: model):
     if optimizer_params.clip_gradient_norm:
-        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(),
+        total_norm = torch.nn.utils.clip_grad_norm_(net.parameters(),
                                                     max_norm=optimizer_params.gradient_clip_norm_value)
     else:
-        total_norm = global_norm(model)
+        total_norm = global_norm(net)
     return total_norm
 
 
@@ -85,18 +90,18 @@ def gradient_skip(global_norm):
     return skip, gradient_skip_counter_delta
 
 
-def reconstruction_step(model, inputs, variates_masks=None, step_n=None):
-    model.eval()
+def reconstruction_step(net: model, inputs: tensor, variates_masks=None, step_n=None):
+    net.eval()
     with torch.no_grad():
-        predictions, computed, kl_divs = model(inputs, variates_masks)
+        predictions, computed, kl_divs = net(inputs, variates_masks)
         if step_n is None:
             step_n = max(loss_params.vae_beta_anneal_steps, loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, predictions, kl_divs, step_n=step_n)
-        outputs = model.sample(predictions)
+        outputs = net.sample(predictions)
         return outputs, computed, results
 
 
-def reconstruct(model, test_dataset, artifacts_folder=None, latents_folder=None):
+def reconstruct(net: model, dataset: DataLoader, artifacts_folder=None, latents_folder=None):
     ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
     if artifacts_folder is not None:
         artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/reconstructed')
@@ -111,9 +116,9 @@ def reconstruct(model, test_dataset, artifacts_folder=None, latents_folder=None)
     sample_i = 0
 
     io_pairs = list()
-    for step, inputs in enumerate(test_dataset):
+    for step, inputs in enumerate(dataset):
         inputs = inputs.to(device)
-        outputs, _, loss = reconstruction_step(model, inputs, variates_masks=variate_masks)
+        outputs, _, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
         targets = inputs
 
         reconstruction_loss = loss['reconstruction_loss']
@@ -148,13 +153,13 @@ def reconstruct(model, test_dataset, artifacts_folder=None, latents_folder=None)
     return io_pairs
 
 
-def generation_step(model, temperatures):
-    outputs, computed = model.sample_from_prior(synthesis_params.batch_size, temperatures=temperatures)
-    samples = model.sample(outputs)
+def generation_step(net: model, temperatures: list):
+    outputs, computed = net.sample_from_prior(synthesis_params.batch_size, temperatures=temperatures)
+    samples = net.sample(outputs)
     return samples
 
 
-def generate(model):
+def generate(net: model):
     all_outputs = list()
     for temp_i, temperature_setting in enumerate(synthesis_params.temperature_settings):
         print(f'Generating for temperature setting {temp_i:01d}')
@@ -162,11 +167,11 @@ def generate(model):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), model.decoder._decoder_blocks)))
+                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder._decoder_blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), model.decoder._decoder_blocks))
+            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder._decoder_blocks))
             temp_fn = linear_temperature(*temperature_setting, n_layers=down_blocks)
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
@@ -174,7 +179,7 @@ def generate(model):
 
         temp_outputs = list()
         for step in range(synthesis_params.n_generation_batches):
-            outputs = generation_step(model, temperatures=temperatures)
+            outputs = generation_step(net, temperatures=temperatures)
             temp_outputs.append(outputs)
 
             print(f'Step: {step:04d}', end='\r')
@@ -182,7 +187,7 @@ def generate(model):
     return all_outputs
 
 
-def encode(model, dataset, latents_folder=None):
+def encode(net: model, dataset: DataLoader, latents_folder: str = None):
     if os.path.isfile(os.path.join(latents_folder, 'div_stats.npy')):
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
         variate_masks = get_variate_masks(div_stats)
@@ -190,13 +195,13 @@ def encode(model, dataset, latents_folder=None):
         variate_masks = None
 
     encodings = {'images': {}, 'latent_codes': {}}
-    model = model.eval()
+    net.eval()
     print('Starting Encoding mode \n')
     with torch.no_grad():
         for step, (inputs, filenames) in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
 
-            _, computed, _ = reconstruction_step(model, inputs, variates_masks=variate_masks)
+            _, computed, _ = reconstruction_step(net, inputs, variates_masks=variate_masks)
 
             """
             # If the mask states all variables of a layer are not effective we don't collect any latents from that layer
@@ -211,42 +216,46 @@ def encode(model, dataset, latents_folder=None):
     return computed
 
 
-def train_step(model, optimizer, inputs, step_n):
-    predictions, _, kl_divs = model(inputs)
-    outputs = model.sample(predictions)
+def train_step(net: model, optimizer, inputs, step_n):
+    predictions, _, kl_divs = net(inputs)
+    outputs = net.sample(predictions)
     results = compute_loss(inputs, predictions, kl_divs, step_n=step_n)
 
     results["elbo"].backward()
 
-    global_norm = gradient_clip(model)
+    global_norm = gradient_clip(net)
     skip, gradient_skip_counter_delta = gradient_skip(global_norm)
 
     if not skip:
         optimizer.step()
-        model.update_ema(train_params.ema_decay)
+        net.update_ema(train_params.ema_decay)
 
     optimizer.zero_grad()
     return outputs, results, global_norm, gradient_skip_counter_delta
 
 
-def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_start_step, tb_writer_train,
-          tb_writer_val, checkpoint_path):
-    ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
+def train(net: model,
+          optimizer, schedule,
+          train_loader: DataLoader, val_loader: DataLoader,
+          checkpoint_start_step: int,
+          tb_writer_train: SummaryWriter, tb_writer_val: SummaryWriter,
+          checkpoint_path: str) -> None:
 
+    ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
     global_step = checkpoint_start_step
     gradient_skip_counter = 0.
 
-    model.train()
-    total_train_epochs = int(np.ceil(train_params.total_train_steps / len(train_dataset)))
+    net.train()
+    total_train_epochs = int(np.ceil(train_params.total_train_steps / len(train_loader)))
     val_epoch = 0
     for epoch in range(total_train_epochs):
-        for batch_n, train_inputs in enumerate(train_dataset):
+        for batch_n, train_inputs in enumerate(train_loader):
             global_step += 1
             train_inputs = train_inputs.to(device, non_blocking=True)
 
             start_time = time.time()
             train_outputs, results, global_norm, gradient_skip_counter_delta = \
-                train_step(model, optimizer, train_inputs, global_step)
+                train_step(net, optimizer, train_inputs, global_step)
             end_time = round((time.time() - start_time), 2)
             schedule.step()
 
@@ -271,7 +280,7 @@ def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_sta
             CHECKPOINTING AND EVALUATION
             """
             if global_step % train_params.checkpoint_and_eval_interval_in_steps == 0 or global_step == 0:
-                model.eval()
+                net.eval()
                 # Compute SSIM at the end of the global_step
                 train_ssim = ssim_metric(train_inputs, train_outputs,
                                          global_batch_size=train_params.batch_size)
@@ -294,9 +303,9 @@ def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_sta
                 val_ssim = 0
                 val_kl_divs = 0
                 val_epoch += 1
-                for val_step, val_inputs in enumerate(val_dataset):
+                for val_step, val_inputs in enumerate(val_loader):
                     val_inputs = val_inputs.to(device, non_blocking=True)
-                    val_outputs, val_computed, val_results = reconstruction_step(model, inputs=val_inputs,
+                    val_outputs, val_computed, val_results = reconstruction_step(net, inputs=val_inputs,
                                                                                  step_n=global_step, )
 
                     val_ssim_per_batch = ssim_metric(val_inputs, val_outputs,
@@ -339,8 +348,8 @@ def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_sta
 
                 torch.save({
                     'global_step': global_step,
-                    'model_state_dict': model.module.state_dict(),
-                    'ema_model_state_dict': model.ema_model.state_dict(),
+                    'model_state_dict': net.module.state_dict(),
+                    'ema_model_state_dict': net.ema_model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': schedule.state_dict()
                 }, checkpoint_path)
@@ -356,19 +365,19 @@ def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_sta
                 # Save artifacts
                 plot_image(train_outputs[0], train_inputs[0], global_step, writer=tb_writer_train)
                 plot_image(val_outputs[0], val_inputs[0], global_step, writer=tb_writer_val)
-                model.train()
+                net.train()
 
             if global_step >= train_params.total_train_steps:
                 print(f'Finished training after {global_step} steps!')
                 exit()
 
 
-def compute_per_dimension_divergence_stats(model, dataset):
+def compute_per_dimension_divergence_stats(net: model, dataset: DataLoader) -> tensor:
     per_dim_divs = None
     with torch.no_grad():
         for step, inputs in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
-            output, computed, kl_divs = model(inputs)
+            output, computed, kl_divs = net(inputs)
             kl_div = torch.stack(list(map(lambda y: y[1], kl_divs)), dim=0)
 
             per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
@@ -376,7 +385,7 @@ def compute_per_dimension_divergence_stats(model, dataset):
     return per_dim_divs
 
 
-def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
+def sample_from_mol(logits: tensor, min_pix_value: int = 0, max_pix_value: int = 255) -> tensor:
     def _compute_scales(logits):
         from torch import nn
         softplus = nn.Softplus(beta=model_params.output_gradient_smoothing_beta)

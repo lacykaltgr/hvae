@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 from torch import nn
+from typing import List
+from torch import tensor
 
 from elements.losses import KLDivergence
 from elements.layers import GaussianLatentLayer
@@ -8,27 +10,30 @@ from elements.models import get_model
 
 
 class _Block(nn.Module):
-    def __init__(self, input=None):
+    def __init__(self, input_id: str or List[str] = None):
         super(_Block, self).__init__()
-        self.input = input
+        self.input = input_id
         self.output = self.input + "_out"
 
-    def set_output(self, output):
+    def set_output(self, output: str) -> None:
         self.output = output
 
 
 class ConcatBlock(_Block):
-    def __init__(self, inputs, dimension=1):
+    def __init__(self, inputs: List[str], dimension: int = 1):
         super(ConcatBlock, self).__init__(inputs)
         self.dimension = dimension
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict):
         if not all([inp in computed for inp in self.inputs]):
             raise ValueError("Not all inputs found in computed")
         if len(self.inputs) != 2:
             raise ValueError("ConcatBlock only supports two inputs")
-        x1, x2 = [computed[inp] for inp in self.inputs]
-        return torch.cat([x1, x2], dim=self.dimension)
+        assert len(self.inputs) == 2
+        x, skip = [computed[inp] for inp in self.inputs]
+        x_skip = torch.cat([x, skip], dim=self.dimension)
+        computed[self.output] = x_skip
+        return x_skip, computed
 
 
 class InputBlock(_Block):
@@ -36,7 +41,7 @@ class InputBlock(_Block):
         super(InputBlock, self).__init__()
         self.net = net
 
-    def forward(self, inputs):
+    def forward(self, inputs: tensor) -> (tensor, dict):
         computed = {self.input: inputs}
         if self.net is None:
             return inputs, computed
@@ -46,11 +51,11 @@ class InputBlock(_Block):
 
 
 class OutputBlock(_Block):
-    def __init__(self, net, input):
-        super(OutputBlock, self).__init__(input)
+    def __init__(self, net, input_id: str):
+        super(OutputBlock, self).__init__(input_id)
         self.net = net
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
             raise ValueError("Input {} not found in computed".format(self.input))
         inputs = computed[self.input]
@@ -60,11 +65,11 @@ class OutputBlock(_Block):
 
 
 class EncBlock(_Block):
-    def __init__(self, net, input):
-        super(EncBlock, self).__init__(input)
+    def __init__(self, net, input_id: str):
+        super(EncBlock, self).__init__(input_id)
         self.net = net
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
             raise ValueError("Input {} not found in computed".format(self.input))
         inputs = computed[self.input]
@@ -77,11 +82,11 @@ class SimpleDecBlock(_Block):
 
     gaussian_diag_samples = GaussianLatentLayer()
 
-    def __init__(self, net, input):
+    def __init__(self, net, input: str):
         super(SimpleDecBlock, self).__init__(input)
         self.prior_net = get_model(net)
 
-    def _sample_uncond(self, y, t=None):
+    def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
         if t is not None:
@@ -89,15 +94,15 @@ class SimpleDecBlock(_Block):
         z = self.draw_gaussian_diag_samples(pm, pv)
         return z
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict, tuple):
         if self.input not in computed:
             raise ValueError("Input {} not found in computed".format(self.input))
         x = computed[self.input]
         z = self._sample_uncond(x)
         computed[self.output] = z
-        return z, computed
+        return z, computed, None
 
-    def sample_from_prior(self, computed, t=None):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
         x = computed[self.input]
         z = self._sample_uncond(x, t)
         computed[self.output] = z
@@ -111,13 +116,13 @@ class DecBlock(SimpleDecBlock):
     def __init__(self,
                  prior_net,
                  posterior_net,
-                 input, condition):
-        super(DecBlock, self).__init__(prior_net, input)
+                 input_id: str, condition: str):
+        super(DecBlock, self).__init__(prior_net, input_id)
         self.prior_net = get_model(prior_net)
         self.posterior_net = get_model(posterior_net)
         self.condition = condition
 
-    def _sample(self, y, cond):
+    def _sample(self, y: tensor, cond: tensor) -> (tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
@@ -125,7 +130,7 @@ class DecBlock(SimpleDecBlock):
         kl = self.kl_divergence(qm, pm, qv, pv)
         return z, kl
 
-    def _sample_uncond(self, y, t=None):
+    def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
         if t is not None:
@@ -133,7 +138,7 @@ class DecBlock(SimpleDecBlock):
         z = self.draw_gaussian_diag_samples(pm, pv)
         return z
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict, tuple):
         if self.input not in computed:
             raise ValueError("Input {} not found in computed".format(self.input))
         if self.condition not in computed:
@@ -144,7 +149,7 @@ class DecBlock(SimpleDecBlock):
         computed[self.output] = z
         return z, computed, kl
 
-    def sample_from_prior(self, computed, t=None):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
         x = computed[self.input]
         z = self._sample_uncond(x, t)
         computed[self.output] = z
@@ -152,11 +157,12 @@ class DecBlock(SimpleDecBlock):
 
 
 class TopBlock(DecBlock):
-    def __init__(self,
-                 net,
-                 prior_trainable,
-                 condition):
+    def __init__(self, net,
+                 prior_trainable: bool,
+                 condition: str):
+
         super(TopBlock, self).__init__(None, net, None, condition)
+
         H, W, C = None, None, None
         #TODO: itt fent hparamsból kell valami
         if prior_trainable:
@@ -167,7 +173,7 @@ class TopBlock(DecBlock):
             # constant tensor with 0 values
             self.trainable_h = torch.zeros(size=(1, C, H, W), requires_grad=False)
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict, tuple):
         if self.condition not in computed:
             raise ValueError("Condition {} not found in computed".format(self.condition))
         x = self.trainable_h
@@ -176,7 +182,7 @@ class TopBlock(DecBlock):
         computed[self.output] = z
         return z, computed, kl
 
-    def sample_from_prior(self, batch_size, t=None):
+    def sample_from_prior(self, batch_size: int, t: int or float = None) -> (tensor, dict):
         y = torch.tile(self.trainable_h, (batch_size, 1, 1, 1))
         z = self._sample_uncond(y, t)
         computed = {
@@ -185,21 +191,19 @@ class TopBlock(DecBlock):
         return z, computed
 
 
-class DecBlockResidual(DecBlock):
-    def __init__(self,
-                 net,
+class ResidualDecBlock(DecBlock):
+    def __init__(self, net,
                  prior_net,
                  posterior_net,
                  z_projection,
-                 zdim,
                  input, condition):
-        super(DecBlockResidual, self).__init__(prior_net, posterior_net, input, condition)
+        super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition)
+        self.net = get_model(net)
         self.prior_net = get_model(prior_net)
         self.posterior_net = get_model(posterior_net)
-        self.zdim = zdim
         self.z_projection = get_model(z_projection)
 
-    def _sample(self, y, cond):
+    def _sample(self, y: tensor, cond: tensor) -> (tensor, tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
@@ -209,7 +213,7 @@ class DecBlockResidual(DecBlock):
         kl = self.gaussian_analytical_kl(qm, pm, qv, pv)
         return z, y, kl
 
-    def _sample_uncond(self, y, t=None):
+    def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
         y = y + kl_residual
@@ -218,7 +222,7 @@ class DecBlockResidual(DecBlock):
         z = self.draw_gaussian_diag_samples(pm, pv)
         return z, y
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
         z, x, kl = self._sample(x, cond)
@@ -227,10 +231,10 @@ class DecBlockResidual(DecBlock):
         computed[self.output] = x
         return x, computed, kl
 
-    def sample_from_prior(self, computed, t=None):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
         x = computed[self.input]
         z, x = self._sample_uncond(x, t)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
-        return x
+        return x, computed

@@ -16,7 +16,7 @@ def _model():
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
-            input="z"
+            input_id="z"
         ),
     )
 

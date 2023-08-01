@@ -2,16 +2,17 @@ import copy
 from torch import nn
 from model import train, reconstruct, generate, encode, compute_per_dimension_divergence_stats
 import torch
+from torch import tensor
 from block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 
 
 class Encoder(nn.Module):
-    def __init__(self, encoder_blocks):
+    def __init__(self, encoder_blocks: dict):
         super(Encoder, self).__init__()
         self.encoder_blocks = encoder_blocks
 
-    def forward(self, x):
-        computed = dict()
+    def forward(self, x: tensor) -> (tensor, dict):
+        computed = x
         output = None
         for block in self.encoder_blocks:
             output, computed = block(computed)
@@ -19,12 +20,11 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, decoder_blocks, out_net):
+    def __init__(self, decoder_blocks: dict):
         super(Decoder, self).__init__()
         self._decoder_blocks = decoder_blocks
-        self.out_net = out_net
 
-    def forward(self, computed):
+    def forward(self, computed: dict) -> (tensor, dict, list):
         kl_divs = []
         output = None
         for block in self._decoder_blocks:
@@ -32,7 +32,7 @@ class Decoder(nn.Module):
             kl_divs.append(kl_div)
         return output, computed, kl_divs
 
-    def sample_from_prior(self, batch_size, temperatures):
+    def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
             for i, block in enumerate(self._decoder_blocks):
                 output, computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
@@ -40,13 +40,13 @@ class Decoder(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks, device):
+    def __init__(self, blocks: dict, device: str = "cuda"):
         super(hVAE, self).__init__()
 
         for block in blocks:
             blocks[block].set_output(block)
-        encoder_blocks = filter(lambda block: isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)), blocks)
-        decoder_blocks = filter(lambda block: isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)), blocks)
+        encoder_blocks = dict(filter(lambda block: isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)), blocks))
+        decoder_blocks = dict(filter(lambda block: isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)), blocks))
 
         self.encoder = Encoder(encoder_blocks)
         self.decoder = Decoder(decoder_blocks)
@@ -54,7 +54,7 @@ class hVAE(nn.Module):
 
         self.device = device
 
-    def compute(self, block_name):
+    def compute(self, block_name) -> (tensor, dict):
         pass
 
     def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
@@ -76,16 +76,16 @@ class hVAE(nn.Module):
               train_loader, val_loader, checkpoint['global_step'],
               writer_train, writer_val, checkpoint_path)
 
-    def sample(self, logits):
+    def sample(self, logits) -> tensor:
         from model import sample_from_mol
         samples = sample_from_mol(logits)
         return samples
 
-    def sample_from_prior(self, batch_size, temperatures):
+    def sample_from_prior(self, batch_size, temperatures) -> (tensor, dict):
         output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
         return output, computed
 
-    def forward(self, x):
+    def forward(self, x) -> (tensor, dict, list):
         _, computed = self.encoder(x)
         output, computed, kl_divs = self.decoder(computed)
         return output, computed, kl_divs
@@ -96,7 +96,9 @@ class hVAE(nn.Module):
             p2.data.mul_(ema_rate)
             p2.data.add_(p1.data * (1 - ema_rate))
 
-    def visualize_graph(self):
+    #TODO
+    def visualize_graph(self) -> None:
+
         import networkx as nx
         import matplotlib.pyplot as plt
 
@@ -135,8 +137,10 @@ class hVAE(nn.Module):
         plt.show()
 
     def save(self, path):
+        #TODO
         torch.save(self.state_dict(), path)
 
     @staticmethod
     def load(self, path) -> None:
+        #TODO
         self.load_state_dict(torch.load(path))
