@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
 import warnings
+from hparams import *
 
 
 def get_schedule(optimizer, decay_scheme, warmup_steps, decay_steps, decay_rate, decay_start,
@@ -63,14 +64,15 @@ class LinearBetaSchedule:
 class GammaSchedule:
     def __init__(self, max_steps):
         self.max_steps = max_steps
-        self.num_groups = sum(hparams.model.down_n_blocks_per_res) + len(hparams.model.down_strides)
+        self.num_groups = optimizer_params.gamma_n_groups
+        # TODO:= sum(model.down_n_blocks_per_res) + len(model.down_strides) ??
 
     def __call__(self, kl_losses, avg_kl_losses, step_n, epsilon=0.):
         avg_kl_losses = torch.stack(avg_kl_losses, dim=0) * np.log(2)  # [n]
         assert kl_losses.size() == avg_kl_losses.size() == (self.num_groups,)
 
         if step_n <= self.max_steps:
-            if hparams.loss.scaled_gamma:
+            if loss_params.scaled_gamma:
                 alpha_hat = (avg_kl_losses + epsilon)
             else:
                 alpha_hat = kl_losses + epsilon

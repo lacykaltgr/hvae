@@ -2,39 +2,41 @@ import time
 import os
 from tqdm import tqdm
 
-from src.elements.losses import StructureSimilarityIndexMap, KLDivergenceStats
+from src.elements.losses import StructureSimilarityIndexMap
 from src.elements.schedules import *
-from utils import tensorboard_log, plot_image, get_variate_masks, write_image_to_disk, reshape_distribution, transpose_dicts, one_hot
-
+from utils import tensorboard_log, plot_image, get_variate_masks, write_image_to_disk, linear_temperature, one_hot
+from block import DecBlock, TopBlock
 
 from hparams import *
 
-device = run_params.device
-gamma_schedule = GammaSchedule(max_steps=loss_params.gamma_max_steps)
-if loss_params.variation_schedule == 'Logistic':
-    kldiv_schedule = LogisticBetaSchedule(
+device = model_params.device
+gamma_schedule = GammaSchedule(max_steps=loss_params.gamma_max_steps) \
+    if loss_params.use_gamma_schedule \
+    else None
+kldiv_schedule = \
+    LogisticBetaSchedule(
         activation_step=loss_params.vae_beta_activation_steps,
-        growth_rate=loss_params.vae_beta_growth_rate)
-elif loss_params.variation_schedule == 'Linear':
-    kldiv_schedule = LinearBetaSchedule(
+        growth_rate=loss_params.vae_beta_growth_rate) \
+        if loss_params.variation_schedule == 'Logistic' \
+        else LinearBetaSchedule(
         anneal_start=loss_params.vae_beta_anneal_start,
         anneal_steps=loss_params.vae_beta_anneal_steps,
-        beta_min=loss_params.loss.vae_beta_min)
-else:
-    kldiv_schedule = lambda x: torch.as_tensor(1.)
+        beta_min=loss_params.loss.vae_beta_min) \
+        if loss_params.variation_schedule == 'Linear' \
+        else lambda x: torch.as_tensor(1.)
 
 
 def compute_loss(targets, predictions, kl_divs, step_n):
     feature_matching_loss, avg_feature_matching_loss, means, log_scales = \
         loss_params.reconstruction_loss(targets=targets, predictions=predictions)
 
-    global_variational_prior_losses = torch.stack(list(map(lambda x: x[0], kl_divs)), dim = 0)
+    global_variational_prior_losses = torch.stack(list(map(lambda x: x[0], kl_divs)), dim=0)
     avg_global_var_prior_losses = map(lambda x: x[1], kl_divs)
     global_variational_prior_loss = torch.sum(global_variational_prior_losses) \
         if not loss_params.use_gamma_schedule \
         else gamma_schedule(global_variational_prior_losses,
-                                    avg_global_var_prior_losses,
-                                    step_n=step_n)
+                            avg_global_var_prior_losses,
+                            step_n=step_n)
     global_var_loss = kldiv_schedule(step_n) * global_variational_prior_loss  # beta
     total_generator_loss = feature_matching_loss + global_var_loss
     scalar = np.log(2.)
@@ -50,7 +52,7 @@ def compute_loss(targets, predictions, kl_divs, step_n):
         kl_div=kl_div)
 
 
-def _global_norm(model):
+def global_norm(model):
     parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
     if len(parameters) == 0:
         total_norm = torch.tensor(0.0)
@@ -62,9 +64,10 @@ def _global_norm(model):
 
 def gradient_clip(model):
     if optimizer_params.clip_gradient_norm:
-        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=optimizer_params.gradient_clip_norm_value)
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(),
+                                                    max_norm=optimizer_params.gradient_clip_norm_value)
     else:
-        total_norm = _global_norm(model)
+        total_norm = global_norm(model)
     return total_norm
 
 
@@ -82,16 +85,18 @@ def gradient_skip(global_norm):
     return skip, gradient_skip_counter_delta
 
 
-def reconstruction_step(model, inputs, variates_masks=None):
+def reconstruction_step(model, inputs, variates_masks=None, step_n=None):
     model.eval()
     with torch.no_grad():
         predictions, computed, kl_divs = model(inputs, variates_masks)
-        results = compute_loss(inputs, predictions, kl_divs)
+        if step_n is None:
+            step_n = max(loss_params.vae_beta_anneal_steps, loss_params.gamma_max_steps) * 10.
+        results = compute_loss(inputs, predictions, kl_divs, step_n=step_n)
         outputs = model.sample(predictions)
         return outputs, computed, results
 
 
-def reconstruct(test_dataset, model, artifacts_folder=None, latents_folder=None):
+def reconstruct(model, test_dataset, artifacts_folder=None, latents_folder=None):
     ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
     if artifacts_folder is not None:
         artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/reconstructed')
@@ -151,33 +156,22 @@ def generation_step(model, temperatures):
 
 def generate(model):
     all_outputs = list()
-    # Generation supports runs with several temperature configs to avoid rebuilding each time
     for temp_i, temperature_setting in enumerate(synthesis_params.temperature_settings):
-        """
-        TODO
         print(f'Generating for temperature setting {temp_i:01d}')
-        # Make per layer temperatures of the setting
         if isinstance(temperature_setting, list):
-            # Use defined list of temperatures
-            assert len(temperature_setting) == len(hparams.model.down_strides)
             temperatures = temperature_setting
-
         elif isinstance(temperature_setting, float):
-            # Use the same float valued temperature for all layers
-            temperatures = [temperature_setting] * len(hparams.model.down_strides)
-
+            temperatures = [temperature_setting] * len(
+                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), model.decoder._decoder_blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            temp_fn = getattr(temperature_functions, temperature_setting[0])(
-                temperature_setting[1],
-                temperature_setting[2], n_layers=len(hparams.model.down_strides))
-            temperatures = [temp_fn(layer_i) for layer_i in range(len(hparams.model.down_strides))]
-
+            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), model.decoder._decoder_blocks))
+            temp_fn = linear_temperature(*temperature_setting, n_layers=down_blocks)
+            temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
             raise ValueError(f'Temperature Setting {temperature_setting} not interpretable!!')
-        """
-        temperatures = None
+
         temp_outputs = list()
         for step in range(synthesis_params.n_generation_batches):
             outputs = generation_step(model, temperatures=temperatures)
@@ -188,8 +182,7 @@ def generate(model):
     return all_outputs
 
 
-def encode(dataset, model, latents_folder=None):
-
+def encode(model, dataset, latents_folder=None):
     if os.path.isfile(os.path.join(latents_folder, 'div_stats.npy')):
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
         variate_masks = get_variate_masks(div_stats)
@@ -218,17 +211,10 @@ def encode(dataset, model, latents_folder=None):
     return computed
 
 
-def update_ema(vae, ema_vae, ema_rate):
-    for p1, p2 in zip(vae.parameters(), ema_vae.parameters()):
-        # Beta * previous ema weights + (1 - Beta) * current non ema weight
-        p2.data.mul_(ema_rate)
-        p2.data.add_(p1.data * (1 - ema_rate))
-
-
-def train_step(model, ema_model, optimizer, inputs):
+def train_step(model, optimizer, inputs, step_n):
     predictions, _, kl_divs = model(inputs)
     outputs = model.sample(predictions)
-    results = compute_loss(inputs, predictions, kl_divs)
+    results = compute_loss(inputs, predictions, kl_divs, step_n=step_n)
 
     results["elbo"].backward()
 
@@ -237,17 +223,17 @@ def train_step(model, ema_model, optimizer, inputs):
 
     if not skip:
         optimizer.step()
-        update_ema(model, ema_model, train_params.ema_decay)
+        model.update_ema(train_params.ema_decay)
 
     optimizer.zero_grad()
     return outputs, results, global_norm, gradient_skip_counter_delta
 
 
-def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, checkpoint_start, tb_writer_train,
-          tb_writer_val, checkpoint_path, device):
+def train(model, optimizer, schedule, train_dataset, val_dataset, checkpoint_start_step, tb_writer_train,
+          tb_writer_val, checkpoint_path):
     ssim_metric = StructureSimilarityIndexMap(image_channels=data_params.channels)
 
-    global_step = checkpoint_start
+    global_step = checkpoint_start_step
     gradient_skip_counter = 0.
 
     model.train()
@@ -259,8 +245,8 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
             train_inputs = train_inputs.to(device, non_blocking=True)
 
             start_time = time.time()
-            train_outputs, results, global_norm, gradient_skip_counter_delta = train_step(
-                model, ema_model, optimizer, train_inputs)
+            train_outputs, results, global_norm, gradient_skip_counter_delta = \
+                train_step(model, optimizer, train_inputs, global_step)
             end_time = round((time.time() - start_time), 2)
             schedule.step()
 
@@ -276,7 +262,7 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                   ('average KL loss', round(train_var_loss.item(), 3)),
                   ('Beta', round(kldiv_schedule(global_step).detach().cpu().item(), 4)),
                   ('N° active groups', np.sum([v.detach().cpu() >= eval_params.latent_active_threshold
-                                              for v in results["avg_var_prior_losses"]])),
+                                               for v in results["avg_var_prior_losses"]])),
                   ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
                   ('GradSkipCount', gradient_skip_counter),
                   end="\r")
@@ -310,10 +296,11 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 val_epoch += 1
                 for val_step, val_inputs in enumerate(val_dataset):
                     val_inputs = val_inputs.to(device, non_blocking=True)
-                    val_outputs, val_computed, val_results = reconstruction_step(model, inputs=val_inputs)
+                    val_outputs, val_computed, val_results = reconstruction_step(model, inputs=val_inputs,
+                                                                                 step_n=global_step, )
 
                     val_ssim_per_batch = ssim_metric(val_inputs, val_outputs,
-                                                     global_batch_size=eval_params.batch_size // train_params.num_gpus)
+                                                     global_batch_size=eval_params.batch_size)
 
                     val_feature_matching_losses += val_results["reconstruction_loss"]
                     val_ssim += val_ssim_per_batch
@@ -323,7 +310,8 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                         val_global_varprior_losses = val_results["avg_var_prior_losses"]
                     else:
                         val_global_varprior_losses = [u + v for u, v in
-                                                      zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
+                                                      zip(val_global_varprior_losses,
+                                                          val_results["avg_var_prior_losses"])]
 
                 val_feature_matching_loss = val_feature_matching_losses / (val_step + 1)
                 val_ssim = val_ssim / (val_step + 1)
@@ -352,7 +340,7 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 torch.save({
                     'global_step': global_step,
                     'model_state_dict': model.module.state_dict(),
-                    'ema_model_state_dict': ema_model.state_dict(),
+                    'ema_model_state_dict': model.ema_model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': schedule.state_dict()
                 }, checkpoint_path)
@@ -360,8 +348,10 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 # Tensorboard logging
                 print('Logging to Tensorboard..')
                 train_losses['skips_count'] = gradient_skip_counter / train_params.total_train_steps
-                tensorboard_log(model, optimizer, global_step, tb_writer_train, train_losses, train_outputs, train_inputs, global_norm=global_norm)
-                tensorboard_log(model, optimizer, global_step, tb_writer_val, val_losses, val_outputs, val_inputs, means=val_results["means"], log_scales=val_results["log_scales"], mode='val')
+                tensorboard_log(model, optimizer, global_step, tb_writer_train, train_losses, train_outputs,
+                                train_inputs, global_norm=global_norm)
+                tensorboard_log(model, optimizer, global_step, tb_writer_val, val_losses, val_outputs, val_inputs,
+                                means=val_results["means"], log_scales=val_results["log_scales"], mode='val')
 
                 # Save artifacts
                 plot_image(train_outputs[0], train_inputs[0], global_step, writer=tb_writer_train)
@@ -373,58 +363,50 @@ def train(model, ema_model, optimizer, schedule, train_dataset, val_dataset, che
                 exit()
 
 
-def compute_per_dimension_divergence_stats(dataset, model):
-    kl_stats = KLDivergenceStats()
-
+def compute_per_dimension_divergence_stats(model, dataset):
     per_dim_divs = None
     with torch.no_grad():
         for step, inputs in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
-            predictions, posterior_dist_list, prior_kl_dist_list = model(inputs)
-            kl_div = kl_stats(posterior_dist_list, prior_kl_dist_list, synthesis_params.batch_size)
+            output, computed, kl_divs = model(inputs)
+            kl_div = torch.stack(list(map(lambda y: y[1], kl_divs)), dim=0)
 
-            if per_dim_divs is None:
-                per_dim_divs = kl_div
-            else:
-                per_dim_divs += kl_div
-
+            per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
     per_dim_divs /= (step + 1)
     return per_dim_divs
 
-"""
-def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
 
+def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
     def _compute_scales(logits):
         from torch import nn
-        softplus = nn.Softplus(beta=hparams.model.output_gradient_smoothing_beta)
-        if hparams.model.output_distribution_base == 'std':
-            scales = torch.maximum(softplus(logits), torch.as_tensor(np.exp(hparams.loss.min_mol_logscale)))
-
-        elif hparams.model.output_distribution_base == 'logstd':
-            log_scales = torch.maximum(logits, torch.as_tensor(np.array(hparams.loss.min_mol_logscale)))
-            scales = torch.exp(hparams.model.output_gradient_smoothing_beta * log_scales)
+        softplus = nn.Softplus(beta=model_params.output_gradient_smoothing_beta)
+        if model_params.output_distribution_base == 'std':
+            scales = torch.maximum(
+                softplus(logits), torch.as_tensor(np.exp(loss_params.min_mol_logscale)))
+        elif model_params.output_distribution_base == 'logstd':
+            log_scales = torch.maximum(
+                logits, torch.as_tensor(np.array(loss_params.min_mol_logscale)))
+            scales = torch.exp(model_params.output_gradient_smoothing_beta * log_scales)
         else:
-            raise ValueError(f'distribution base {hparams.model.output_distribution_base} not known!!')
-
+            raise ValueError(f'distribution base {model_params.output_distribution_base} not known!!')
         return scales
 
     B, _, H, W = logits.size()  # B, M*(3*C+1), H, W,
+    n = model_params.num_output_mixtures
+    t = synthesis_params.output_temperature
 
-    logit_probs = logits[:, :model.num_output_mixtures, :, :]  # B, M, H, W
-    l = logits[:, hparams.model.num_output_mixtures:, :, :]  # B, M*C*3 ,H, W
-    l = l.reshape(B, data_params.channels, 3 * hparams.model.num_output_mixtures, H, W)  # B, C, 3 * M, H, W
+    logit_probs = logits[:, :n, :, :]  # B, M, H, W
+    l = logits[:, n:, :, :]  # B, M*C*3 ,H, W
+    l = l.reshape(B, data_params.channels, 3 * n, H, W)  # B, C, 3 * M, H, W
 
-    model_means = l[:, :, :hparams.model.num_output_mixtures, :, :]  # B, C, M, H, W
-    scales = _compute_scales(
-        l[:, :, hparams.model.num_output_mixtures: 2 * hparams.model.num_output_mixtures, :, :])  # B, C, M, H, W
-    model_coeffs = torch.tanh(
-        l[:, :, 2 * hparams.model.num_output_mixtures: 3 * hparams.model.num_output_mixtures, :,
-        :])  # B, C, M, H, W
+    model_means = l[:, :, :n, :, :]  # B, C, M, H, W
+    scales = _compute_scales(l[:, :, n: 2 * n, :, :])  # B, C, M, H, W
+    model_coeffs = torch.tanh(l[:, :, 2 * n: 3 * n, :, :])  # B, C, M, H, W
 
     # Gumbel-max to select the mixture component to use (per pixel)
     gumbel_noise = -torch.log(-torch.log(
         torch.Tensor(logit_probs.size()).uniform_(1e-5, 1. - 1e-5).cuda()))  # B, M, H, W
-    logit_probs = logit_probs / synthesis_params.output_temperature + gumbel_noise
+    logit_probs = logit_probs / t + gumbel_noise
     lambda_ = one_hot(torch.argmax(logit_probs, dim=1), logit_probs.size()[1], dim=1)  # B, M, H, W
 
     lambda_ = lambda_.unsqueeze(1)  # B, 1, M, H, W
@@ -437,18 +419,17 @@ def sample_from_mol(logits, min_pix_value=0, max_pix_value=255):
     # Samples from logistic & clip to interval
     # we don't actually round to the nearest 8bit value when sampling
     u = torch.Tensor(means.size()).uniform_(1e-5, 1. - 1e-5).cuda()
-    x = means + scales * synthesis_params.output_temperature * (
-            torch.log(u) - torch.log(1. - u))  # B, C,  H, W
+    x = means + scales * t * (torch.log(u) - torch.log(1. - u))  # B, C,  H, W
 
-    # Autoregressively predict RGB
-    x0 = torch.clamp(x[:, 0:1, :, :], min=min_pix_value, max=max_pix_value)  # B, 1, H, W
-    x1 = torch.clamp(x[:, 1:2, :, :] + coeffs[:, 0:1, :, :] * x0, min=min_pix_value,
+    # Autoregressive prediction of RGB
+    x0 = torch.clamp(x[:, 0:1, :, :],
+                     min=min_pix_value,
+                     max=max_pix_value)  # B, 1, H, W
+    x1 = torch.clamp(x[:, 1:2, :, :] + coeffs[:, 0:1, :, :] * x0,
+                     min=min_pix_value,
                      max=max_pix_value)  # B, 1, H, W
     x2 = torch.clamp(x[:, 2:3, :, :] + coeffs[:, 1:2, :, :] * x0 + coeffs[:, 2:3, :, :] * x1,
                      min=min_pix_value,
                      max=max_pix_value)  # B, 1, H, W
-
     x = torch.cat([x0, x1, x2], dim=1)  # B, C, H, W
     return x
-
-"""

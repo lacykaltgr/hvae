@@ -2,15 +2,12 @@ from hparams import *
 from src.utils import create_checkpoint_manager_and_load_if_exists, create_tb_writer
 from src.elements.optimizers import get_optimizer
 from src.elements.schedules import get_schedule
-import os
 import torch
 import numpy as np
 
-local_rank = int(os.environ["LOCAL_RANK"])
-
 
 def main():
-    model = run_params.model
+    model = model_params.model()
     with torch.no_grad():
         _ = model(torch.ones((1, data_params.channels, data_params.target_res, data_params.target_res)))
 
@@ -18,7 +15,7 @@ def main():
     print('Train step generator trainable params {:.3f}m.'.format(
         np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))
 
-    checkpoint, checkpoint_path = create_checkpoint_manager_and_load_if_exists(rank=local_rank)
+    checkpoint, checkpoint_path = create_checkpoint_manager_and_load_if_exists()
 
     optimizer = get_optimizer(model=model,
                               type=optimizer_params.type,
@@ -26,7 +23,7 @@ def main():
                               beta_1=optimizer_params.beta1,
                               beta_2=optimizer_params.beta2,
                               epsilon=optimizer_params.epsilon,
-                              weight_decay_rate=0.,
+                              weight_decay_rate=optimizer_params.l2_weight,
                               checkpoint=checkpoint)
     schedule = get_schedule(optimizer=optimizer,
                             decay_scheme=optimizer_params.learning_rate_scheme,
@@ -58,21 +55,9 @@ def main():
         model.ema_model = model.ema_model.to(model.device)
         model.ema_model.requires_grad_(False)
 
-    """
-        if hparams.data.dataset_source in ['ffhq', 'celebAHQ', 'celebA', 'custom']:
-        train_files, train_filenames = create_filenames_list(hparams.data.train_data_path)
-        val_files, val_filenames = create_filenames_list(hparams.data.val_data_path)
-        train_loader, val_loader = train_val_data_generic(train_files, train_filenames, val_files, val_filenames,
-                                                          hparams.run.num_gpus, local_rank)
-    elif hparams.data.dataset_source == 'cifar-10':
-        train_loader, val_loader = train_val_data_cifar10(hparams.run.num_gpus, local_rank)
-    elif hparams.data.dataset_source == 'binarized_mnist':
-        train_loader, val_loader = train_val_data_mnist(hparams.run.num_gpus, local_rank)
-    elif hparams.data.dataset_source == 'imagenet':
-        train_loader, val_loader = train_val_data_imagenet(hparams.run.num_gpus, local_rank)
-    else:
-        raise ValueError(f'Dataset {hparams.data.dataset_source} is not included.')
-    """
+    dataset = data_params.dataset
+    train_loader = dataset.get_train_loader()
+    val_loader = dataset.get_val_loader()
 
     # Book Keeping
     writer_train, logdir = create_tb_writer(mode='train')
@@ -80,7 +65,7 @@ def main():
 
     # Train model
     model.train_model(optimizer, schedule, train_loader, val_loader, checkpoint['global_step'],
-                      writer_train, writer_val, checkpoint_path, local_rank)
+                      writer_train, writer_val, checkpoint_path)
 
 
 if __name__ == '__main__':

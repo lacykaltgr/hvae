@@ -6,7 +6,7 @@ import models.TDVAE as model
 
 optimizer_params = model.optimizer_params
 loss_params = model.loss_params
-run_params = model.run_params
+model_params = model.model_params
 data_params = model.data_params
 train_params = model.train_params
 eval_params = model.eval_params

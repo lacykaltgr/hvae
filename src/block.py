@@ -8,20 +8,18 @@ from elements.models import get_model
 
 
 class _Block(nn.Module):
-    def __init__(self, input, log_output=False, **block_params):
+    def __init__(self, input=None):
         super(_Block, self).__init__()
         self.input = input
         self.output = self.input + "_out"
-        self.log_output = log_output
-        self.block_params = block_params
 
     def set_output(self, output):
         self.output = output
 
 
 class ConcatBlock(_Block):
-    def __init__(self, inputs, dimension, log_output=False, **block_params):
-        super(ConcatBlock, self).__init__(inputs, log_output, **block_params)
+    def __init__(self, inputs, dimension=1):
+        super(ConcatBlock, self).__init__(inputs)
         self.dimension = dimension
 
     def forward(self, computed):
@@ -34,8 +32,8 @@ class ConcatBlock(_Block):
 
 
 class InputBlock(_Block):
-    def __init__(self, net, log_output=False, **block_params):
-        super(InputBlock, self).__init__(input, log_output, **block_params)
+    def __init__(self, net):
+        super(InputBlock, self).__init__()
         self.net = net
 
     def forward(self, inputs):
@@ -48,8 +46,8 @@ class InputBlock(_Block):
 
 
 class OutputBlock(_Block):
-    def __init__(self, net, input, log_output=False, **block_params):
-        super(OutputBlock, self).__init__(input, log_output, **block_params)
+    def __init__(self, net, input):
+        super(OutputBlock, self).__init__(input)
         self.net = net
 
     def forward(self, computed):
@@ -62,8 +60,8 @@ class OutputBlock(_Block):
 
 
 class EncBlock(_Block):
-    def __init__(self, net, input, log_output=False, **block_params):
-        super(EncBlock, self).__init__(input, log_output, **block_params)
+    def __init__(self, net, input):
+        super(EncBlock, self).__init__(input)
         self.net = net
 
     def forward(self, computed):
@@ -75,17 +73,46 @@ class EncBlock(_Block):
         return output, computed
 
 
-class DecBlock(_Block):
+class SimpleDecBlock(_Block):
+
+    gaussian_diag_samples = GaussianLatentLayer()
+
+    def __init__(self, net, input):
+        super(SimpleDecBlock, self).__init__(input)
+        self.prior_net = get_model(net)
+
+    def _sample_uncond(self, y, t=None):
+        y_prior = self.prior_net(y)
+        pm, pv = torch.chunk(y_prior, chunks=2)
+        if t is not None:
+            pv = pv + torch.ones_like(pv) * np.log(t)
+        z = self.draw_gaussian_diag_samples(pm, pv)
+        return z
+
+    def forward(self, computed):
+        if self.input not in computed:
+            raise ValueError("Input {} not found in computed".format(self.input))
+        x = computed[self.input]
+        z = self._sample_uncond(x)
+        computed[self.output] = z
+        return z, computed
+
+    def sample_from_prior(self, computed, t=None):
+        x = computed[self.input]
+        z = self._sample_uncond(x, t)
+        computed[self.output] = z
+        return z, computed
+
+
+class DecBlock(SimpleDecBlock):
 
     kl_divergence = KLDivergence()
-    gaussian_diag_samples = GaussianLatentLayer()
 
     def __init__(self,
                  prior_net,
                  posterior_net,
-                 input, condition, log_output,
-                 **block_params):
-        super(DecBlock, self).__init__(input, log_output, **block_params)
+                 input, condition):
+        super(DecBlock, self).__init__(prior_net, input)
         self.prior_net = get_model(prior_net)
         self.posterior_net = get_model(posterior_net)
         self.condition = condition
@@ -103,7 +130,7 @@ class DecBlock(_Block):
         pm, pv = torch.chunk(y_prior, chunks=2)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = draw_gaussian_diag_samples(pm, pv)
+        z = self.draw_gaussian_diag_samples(pm, pv)
         return z
 
     def forward(self, computed):
@@ -120,29 +147,30 @@ class DecBlock(_Block):
     def sample_from_prior(self, computed, t=None):
         x = computed[self.input]
         z = self._sample_uncond(x, t)
+        computed[self.output] = z
         return z, computed
 
 
 class TopBlock(DecBlock):
     def __init__(self,
-                 prior_net,
-                 posterior_net,
+                 net,
                  prior_trainable,
-                 input, log_output=False,
-                 **block_params):
-        super(TopBlock, self).__init__(prior_net, posterior_net, input, log_output, **block_params)
+                 condition):
+        super(TopBlock, self).__init__(None, net, None, condition)
+        H, W, C = None, None, None
+        #TODO: itt fent hparamsból kell valami
         if prior_trainable:
-            H, W, C = None, None, None
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
                 data=torch.empty(size=(1, C, H, W)), requires_grad=True)
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
+        else:
+            # constant tensor with 0 values
+            self.trainable_h = torch.zeros(size=(1, C, H, W), requires_grad=False)
 
     def forward(self, computed):
-        if self.input not in computed:
-            raise ValueError("Input {} not found in computed".format(self.input))
         if self.condition not in computed:
             raise ValueError("Condition {} not found in computed".format(self.condition))
-        x = computed[self.input]
+        x = self.trainable_h
         cond = computed[self.condition]
         z, kl = self._sample(x, cond)
         computed[self.output] = z
@@ -159,54 +187,50 @@ class TopBlock(DecBlock):
 
 class DecBlockResidual(DecBlock):
     def __init__(self,
-                 model,
+                 net,
                  prior_net,
                  posterior_net,
                  z_projection,
                  zdim,
-                 input, log_output,
-                 **block_params):
-        super(DecBlockResidual, self).__init__(model, input, log_output, **block_params)
+                 input, condition):
+        super(DecBlockResidual, self).__init__(prior_net, posterior_net, input, condition)
         self.prior_net = get_model(prior_net)
         self.posterior_net = get_model(posterior_net)
         self.zdim = zdim
         self.z_projection = get_model(z_projection)
 
-    def _sample(self, y, activations):
-        qm, qv = self.posterior_net(torch.cat([y, activations], dim=1)).chunk(2, dim=1)
+    def _sample(self, y, cond):
+        qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = y_prior[:, :self.zdim, ...], y_prior[:, self.zdim:self.zdim * 2, ...], y_prior[:,
-                                                                                                     self.zdim * 2:,
-                                                                                                     ...]
+        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
+
         y = y + kl_residual
-        z = draw_gaussian_diag_samples(qm, qv)
-        kl = gaussian_analytical_kl(qm, pm, qv, pv)
+        z = self.draw_gaussian_diag_samples(qm, qv)
+        kl = self.gaussian_analytical_kl(qm, pm, qv, pv)
         return z, y, kl
 
-    def _sample_uncond(self, y, t=None, lvs=None):
+    def _sample_uncond(self, y, t=None):
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = y_prior[:, :self.zdim, ...], y_prior[:, self.zdim:self.zdim * 2, ...], y_prior[:,
-                                                                                                     self.zdim * 2:,
-                                                                                                     ...]
+        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
         y = y + kl_residual
-        if lvs is not None:
-            z = lvs
-        else:
-            if t is not None:
-                pv = pv + torch.ones_like(pv) * np.log(t)
-            z = draw_gaussian_diag_samples(pm, pv)
+        if t is not None:
+            pv = pv + torch.ones_like(pv) * np.log(t)
+        z = self.draw_gaussian_diag_samples(pm, pv)
         return z, y
 
-    def forward(self, x, acts, get_latents=False):
-        z, x, kl = self._sample(x, acts)
+    def forward(self, computed):
+        x = computed[self.input]
+        cond = computed[self.condition]
+        z, x, kl = self._sample(x, cond)
         x = x + self.z_projection(z)
-        x = self.model(x)
-        if get_latents:
-            return x, dict(z=z.detach(), kl=kl)
-        return x, dict(kl=kl)
+        x = self.net(x)
+        computed[self.output] = x
+        return x, computed, kl
 
-    def sample_from_prior(self, x, t=None, lvs=None):
-        z, x = self._sample_uncond(x, t, lvs=lvs)
+    def sample_from_prior(self, computed, t=None):
+        x = computed[self.input]
+        z, x = self._sample_uncond(x, t)
         x = x + self.z_projection(z)
-        x = self.model(x)
+        x = self.net(x)
+        computed[self.output] = x
         return x

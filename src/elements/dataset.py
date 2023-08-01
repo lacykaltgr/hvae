@@ -2,9 +2,9 @@ import torch
 from torch.utils.data import Dataset as TorchDataset
 import torchvision.transforms as transforms
 from enum import Enum
-from hparams import *
 import numpy as np
 from PIL import Image
+from hparams import *
 
 
 class DataSetState(Enum):
@@ -23,7 +23,7 @@ class Normalize(object):
         img = np.asarray(img)
         img_dtype = img.dtype
 
-        img = np.floor(img / np.uint8(2 ** (8 - hparams.data.num_bits))) * 2 ** (8 - hparams.data.num_bits)
+        img = np.floor(img / np.uint8(2 ** (8 - data_params.num_bits))) * 2 ** (8 - data_params.num_bits)
         img = img.astype(img_dtype)
 
         return Image.fromarray(img)
@@ -99,7 +99,7 @@ class _DataSet(TorchDataset):
         elif self.mode == DataSetState.TEST:
             return len(self.test_data)
 
-    def train_loader(self):
+    def get_train_loader(self):
         return torch.utils.data.DataLoader(dataset=self.train_data,
                                            batch_size=train_params.batch_size,
                                            shuffle=False,
@@ -107,7 +107,7 @@ class _DataSet(TorchDataset):
                                            num_workers=2,
                                            drop_last=True, prefetch_factor=3)
 
-    def val_loader(self):
+    def get_val_loader(self):
         return torch.utils.data.DataLoader(dataset=self.val_data,
                                            batch_size=eval_params.batch_size,
                                            shuffle=False,
@@ -115,7 +115,7 @@ class _DataSet(TorchDataset):
                                            num_workers=2,
                                            drop_last=True, prefetch_factor=3)
 
-    def test_loader(self):
+    def get_test_loader(self):
         return torch.utils.data.DataLoader(dataset=self.val_data,
                                            batch_size=eval_params.batch_size,
                                            shuffle=False,

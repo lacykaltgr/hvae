@@ -1,4 +1,4 @@
-from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
+from src.block import *
 from src.hvae import hVAE as hvae
 import data
 
@@ -24,9 +24,13 @@ def _model():
             input="y",
             condition="hiddens",
         ),
+        z_skip=ConcatBlock(
+            inputs=["z", "y"],
+            dimension=1
+        ),
         x_hat=OutputBlock(
             net=z_to_x_net,
-            input="z"
+            input="z_skip",
         ),
     )
 

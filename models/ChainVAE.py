@@ -1,4 +1,4 @@
-from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
+from src.block import *
 from src.hvae import hVAE as hvae
 import data
 
@@ -15,14 +15,12 @@ def _model():
         ),
         y=TopBlock(
             net=hiddens_to_y_net,
-            prior_trainable=True,
+            prior_trainable=False,
             condition="hiddens"
         ),
-        z=DecBlock(
-            prior_net=z_prior_net,
-            posterior_net=z_posterior_net,
+        z=SimpleDecBlock(
+            net=y_to_z_net,
             input="y",
-            condition="hiddens",
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
@@ -54,7 +52,7 @@ model_params = Hyperparams(
     device='cuda',
 
     # run.name: Mandatory argument, used to identify runs for save and restore
-    name='cifar10_baseline',
+    name='ChainVAE',
     # run.seed: seed that fixes all randomness in the project
     seed=420,
 
@@ -357,7 +355,7 @@ hiddens_to_y_net = Hyperparams(
     residual=False,
 )
 
-z_prior_net = Hyperparams(
+y_to_z_net = Hyperparams(
     type="conv",
     in_filters=3,
     bottleneck_ratio=0.5,
@@ -371,19 +369,6 @@ z_prior_net = Hyperparams(
     residual=False,
 )
 
-z_posterior_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
-)
 
 z_to_x_net = Hyperparams(
     type='mlp',

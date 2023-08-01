@@ -5,24 +5,6 @@ import torch
 from block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 
 
-def propogate(x, blocks, method_name, params, **kwparams):
-    computed = dict(x=x)
-    output = None
-    while len(blocks) > 0:
-        for block in blocks:
-            inputs = block.inputs.split(",")
-            outputs = block.outputs.split(",")
-            if all([inp in computed for inp in inputs]):
-                method = getattr(block, method_name)
-                input_list = [computed[inp] for inp in inputs]
-                output = method(*input_list, *params, **kwparams)
-                for outp, outp_value in zip(outputs, output):
-                    computed[outp] = output
-                blocks.remove(block)
-                break
-    return output, computed
-
-
 class Encoder(nn.Module):
     def __init__(self, encoder_blocks):
         super(Encoder, self).__init__()
@@ -58,8 +40,8 @@ class Decoder(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks, name, device):
-        super(hVAE, self).__init__(name=name)
+    def __init__(self, blocks, device):
+        super(hVAE, self).__init__()
 
         for block in blocks:
             blocks[block].set_output(block)
@@ -76,23 +58,23 @@ class hVAE(nn.Module):
         pass
 
     def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
-        return reconstruct(dataset, self, artifacts_folder, latents_folder)
+        return reconstruct(self, dataset, artifacts_folder, latents_folder)
 
     def generate(self):
         return generate(self)
 
     def encode(self, dataset, latents_folder=None):
-        return encode(dataset, self, latents_folder)
+        return encode(self, dataset, latents_folder)
 
     def kldiv_stats(self, dataset):
-        return compute_per_dimension_divergence_stats(dataset, self)
+        return compute_per_dimension_divergence_stats(self, dataset)
 
     def train_model(self, optimizer, schedule,
                     train_loader, val_loader, checkpoint,
-                    writer_train, writer_val, checkpoint_path, local_rank):
-        train(self, self.ema_model, optimizer, schedule,
+                    writer_train, writer_val, checkpoint_path):
+        train(self, optimizer, schedule,
               train_loader, val_loader, checkpoint['global_step'],
-              writer_train, writer_val, checkpoint_path, self.device, local_rank)
+              writer_train, writer_val, checkpoint_path)
 
     def sample(self, logits):
         from model import sample_from_mol
@@ -107,6 +89,12 @@ class hVAE(nn.Module):
         _, computed = self.encoder(x)
         output, computed, kl_divs = self.decoder(computed)
         return output, computed, kl_divs
+
+    def update_ema(self, ema_rate):
+        for p1, p2 in zip(self.parameters(), self.ema_model.parameters()):
+            # Beta * previous ema weights + (1 - Beta) * current non ema weight
+            p2.data.mul_(ema_rate)
+            p2.data.add_(p1.data * (1 - ema_rate))
 
     def visualize_graph(self):
         import networkx as nx

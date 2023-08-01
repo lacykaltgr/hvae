@@ -9,20 +9,10 @@ def _model():
         x=InputBlock(
             net=None,
         ),
-        hiddens=EncBlock(
-            net=x_to_hiddens_net,
-            input="x"
-        ),
-        y=TopBlock(
-            net=hiddens_to_y_net,
+        z=TopBlock(
+            net=x_to_z_net,
             prior_trainable=True,
-            condition="hiddens"
-        ),
-        z=DecBlock(
-            prior_net=z_prior_net,
-            posterior_net=z_posterior_net,
-            input="y",
-            condition="hiddens",
+            condition="x",
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
@@ -54,7 +44,7 @@ model_params = Hyperparams(
     device='cuda',
 
     # run.name: Mandatory argument, used to identify runs for save and restore
-    name='cifar10_baseline',
+    name='LinearVAE',
     # run.seed: seed that fixes all randomness in the project
     seed=420,
 
@@ -334,55 +324,13 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_to_hiddens_net = Hyperparams(
+x_to_z_net = Hyperparams(
     type='mlp',
     input_size=784,
     hidden_sizes=[2000],
     output_size=1000,
     activation=torch.nn.ReLU(),
     residual=False
-)
-
-hiddens_to_y_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
-)
-
-z_prior_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
-)
-
-z_posterior_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
 )
 
 z_to_x_net = Hyperparams(
