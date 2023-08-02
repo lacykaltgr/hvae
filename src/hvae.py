@@ -1,6 +1,6 @@
 import copy
 from torch import nn
-from model import train, reconstruct, generate, encode, compute_per_dimension_divergence_stats
+from model import train, reconstruct, generate, compute_per_dimension_divergence_stats
 import torch
 from torch import tensor
 from block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
@@ -24,11 +24,17 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self._decoder_blocks = decoder_blocks
 
-    def forward(self, computed: dict) -> (tensor, dict, list):
+    def forward(self, computed: dict, variate_masks: list = None) -> (tensor, dict, list):
         kl_divs = []
         output = None
-        for block in self._decoder_blocks:
-            output, computed, kl_div = block(computed)
+
+        if variate_masks is None:
+            variate_masks = [None] * len(self._decoder_blocks)
+        assert len(variate_masks) == len(self._decoder_blocks)
+
+        for block, variate_mask in zip(self._decoder_blocks, variate_masks):
+            args = [computed] if isinstance(block, DecBlock) else [computed, variate_mask]
+            output, computed, kl_div = block(*args)
             kl_divs.append(kl_div)
         return output, computed, kl_divs
 
@@ -63,9 +69,6 @@ class hVAE(nn.Module):
     def generate(self):
         return generate(self)
 
-    def encode(self, dataset, latents_folder=None):
-        return encode(self, dataset, latents_folder)
-
     def kldiv_stats(self, dataset):
         return compute_per_dimension_divergence_stats(self, dataset)
 
@@ -81,13 +84,13 @@ class hVAE(nn.Module):
         samples = sample_from_mol(logits)
         return samples
 
-    def sample_from_prior(self, batch_size, temperatures) -> (tensor, dict):
+    def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
         return output, computed
 
-    def forward(self, x) -> (tensor, dict, list):
+    def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
         _, computed = self.encoder(x)
-        output, computed, kl_divs = self.decoder(computed)
+        output, computed, kl_divs = self.decoder(computed, variate_masks)
         return output, computed, kl_divs
 
     def update_ema(self, ema_rate):

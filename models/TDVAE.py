@@ -150,7 +150,9 @@ synthesis_params = Hyperparams(
 
     # Whether to use the EMA weights for inference
     load_ema_weights=True,
-    # reconstruction/encoding mode Defines the quantile at which to prune the latent space (section 7). Example:
+    # Reconstruction/Encoding mode
+    # --------------------
+    # Defines the quantile at which to prune the latent space (section 7). Example:
     # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
     # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
     # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
@@ -158,6 +160,7 @@ synthesis_params = Hyperparams(
     variate_masks_quantile=0.03,
 
     # Reconstruction mode
+    # --------------------
     # Whether to save the targets during reconstruction (for debugging)
     save_target_in_reconstruction=False,
     # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
@@ -166,12 +169,15 @@ synthesis_params = Hyperparams(
     # hurt NLL.
     mask_reconstruction=False,
 
-    # div_stats mode Defines the ratio of the training data to compute the average KL per variate on (used for masked
-    # reconstruction and encoding). Set to 1. to use the full training dataset. But that' usually an overkill as 5%,
-    # 10% or 20% of the dataset tends to be representative enough.
+    # Div_stats mode
+    # --------------------
+    # Defines the ratio of the training data to compute the average KL per variate on (used for masked
+    # reconstruction and encoding). Set to 1. to use the full training dataset.
+    # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
     div_stats_subset_ratio=0.2,
 
-    # generation_mode
+    # Generation_mode
+    # --------------------
     # Number of generated batches per temperature from the temperature_settings list.
     n_generation_batches=1,
     # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of

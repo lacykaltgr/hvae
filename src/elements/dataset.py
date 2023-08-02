@@ -17,7 +17,6 @@ class Normalize(object):
     def __call__(self, img):
         """
         :param img: PIL): Image
-
         :return: Normalized image
         """
         img = np.asarray(img)

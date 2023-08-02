@@ -1,27 +1,40 @@
 from layers import *
+from hparams import *
 from torch import nn
-from hparams import Hyperparams
 
 
 # TODO
 def get_model(model):
     if model is None:
-        return None
+        return nn.Sequential()
+
     elif isinstance(model, str):
         # Load model from default
-        pass
+        if model == 'mlp':
+            return nn.Sequential(MLPNet.from_hparams(mlp_params))
+        elif model == 'conv':
+            return nn.Sequential(ConvNet.from_hparams(conv_params))
+        else:
+            raise NotImplementedError("Model type not supported.")
     elif isinstance(model, Hyperparams):
         # Load model from hyperparameter config
-        pass
+        if "type" not in model:
+            raise ValueError("Model type not specified.")
+        if model.type == 'mlp':
+            return nn.Sequential(MLPNet.from_hparams(model))
+        elif model.type == 'conv':
+            return nn.Sequential(ConvNet.from_hparams(model))
+        else:
+            raise NotImplementedError("Model type not supported.")
+
     elif isinstance(model, nn.Module):
         # Load model from nn.Module
-        return model
-    elif isinstance(model, dict):
-        # Load model from dictionary
-        pass
+        return nn.Sequential(model)
+
     elif isinstance(model, list):
         # Load model from list
-        pass
+        return nn.Sequential(*list(map(get_model, model)))
+
     else:
         raise NotImplementedError("Model type not supported.")
 
@@ -36,6 +49,7 @@ class MLPNet(nn.Module):
         self.residual = residual
 
         layers = []
+
         sizes = [input_size] + hidden_sizes + [output_size]
         for i in range(len(sizes) - 1):
             layers.append(nn.Linear(sizes[i], sizes[i + 1]))
@@ -53,10 +67,21 @@ class MLPNet(nn.Module):
             outputs = x
         return outputs
 
+    @staticmethod
+    def from_hparams(hparams):
+        return MLPNet(
+            input_size=hparams.input_size,
+            hidden_sizes=hparams.hidden_sizes,
+            output_size=hparams.output_size,
+            activation=hparams.activation,
+            residual=hparams.residual
+        )
 
+
+#TODO: pool parameterezhető legyen
 class ConvNet(nn.Module):
     def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
-                 , residual=True, use_1x1=True, output_ratio=1.0, activation=None):
+                 , residual=True, use_1x1=True, pool=False, unpool=False, output_ratio=1.0, activation=None):
         super(ConvNet, self).__init__()
 
         self.residual = residual
@@ -70,12 +95,20 @@ class ConvNet(nn.Module):
         output_filters = int(in_filters * output_ratio)
         bottlneck_filters = int(in_filters * bottleneck_ratio)
 
-        convs = [nn.SiLU(inplace=False),
-                 nn.Conv2d(in_channels=in_filters,
-                           out_channels=bottlneck_filters,
-                           kernel_size=(1, 1) if use_1x1 else kernel_size,
-                           stride=(1, 1),
-                           padding='same')]
+        convs = []
+        if pool:
+            convs.append(PoolLayer(
+                in_filters=in_filters,
+                filters=output_filters,
+                strides=pool_params.strides,
+            ))
+
+        convs += [nn.SiLU(inplace=False),
+                  nn.Conv2d(in_channels=in_filters,
+                            out_channels=bottlneck_filters,
+                            kernel_size=(1, 1) if use_1x1 else kernel_size,
+                            stride=(1, 1),
+                            padding='same')]
 
         for _ in range(n_layers):
             convs.append(nn.SiLU(inplace=False))
@@ -93,6 +126,14 @@ class ConvNet(nn.Module):
                          padding='same')]
 
         convs[-1].weight.data *= init_scaler
+
+        if unpool:
+            convs.append(UnpooLayer(
+                in_filters=output_filters,
+                filters=output_filters,
+                strides=pool_params.strides,
+            ))
+
         self.convs = nn.Sequential(*convs)
         self.activation = activation
 
@@ -107,4 +148,18 @@ class ConvNet(nn.Module):
             outputs = self.activation(outputs)
         return outputs
 
-
+    @staticmethod
+    def from_hparams(hparams):
+        return ConvNet(
+            n_layers=hparams.n_layers,
+            in_filters=hparams.in_filters,
+            bottleneck_ratio=hparams.bottleneck_ratio,
+            output_ratio=hparams.output_ratio,
+            kernel_size=hparams.kernel_size,
+            init_scaler=hparams.init_scaler,
+            use_1x1=hparams.use_1x1,
+            pool=hparams.pool,
+            unpool=hparams.unpool,
+            activation=hparams.activation,
+            residual=hparams.residual,
+        )

@@ -2,7 +2,7 @@ import os
 import pickle
 
 from src.utils import create_checkpoint_manager_and_load_if_exists, get_logdir, write_image_to_disk
-from src.model import compute_per_dimension_divergence_stats, encode, generate, reconstruct
+from src.model import compute_per_dimension_divergence_stats, generate, reconstruct
 
 from hparams import *
 import torch
@@ -13,14 +13,6 @@ def divergence_stats_mode(model, dataset, latents_folder):
     stats_filepath = os.path.join(latents_folder, 'div_stats.npy')
     per_dim_divs = compute_per_dimension_divergence_stats(dataset, model)
     np.save(stats_filepath, per_dim_divs.detach().cpu().numpy())
-
-
-def encoding_mode(model, dataset, latents_folder):
-    encodings = encode(dataset, model, latents_folder)
-    print('Saving Encoded File')
-    assert encodings['images'].keys() == encodings['latent_codes'][0].keys()
-    with open(os.path.join(latents_folder, f'encodings_seed_{model_params.seed}.pkl'), 'wb') as handle:
-        pickle.dump(encodings, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def generation_mode(model, artifacts_folder):
@@ -49,8 +41,6 @@ def synthesize(model, data, logdir, mode):
         reconstruction_mode(model, data, artifacts_folder, latents_folder)
     elif mode == 'generation':
         generation_mode(model, artifacts_folder)
-    elif mode == 'encoding':
-        encoding_mode(model, data, latents_folder)
     elif mode == 'div_stats':
         divergence_stats_mode(model, data, latents_folder)
     else:

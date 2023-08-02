@@ -11,6 +11,11 @@ data_params = model.data_params
 train_params = model.train_params
 eval_params = model.eval_params
 synthesis_params = model.synthesis_params
+
+mlp_params = model.mlp_params
+conv_params = model.conv_params
+pool_params = model.pool_params
+unpool_params = model.unpool_params
 # ^    ^    ^    ^    ^    ^
 
 

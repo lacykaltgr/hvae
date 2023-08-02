@@ -146,8 +146,6 @@ def reconstruct(net: model, dataset: DataLoader, artifacts_folder=None, latents_
 
     nelbo = nelbos / (step + 1)
     ssim = ssims / (step + 1)
-    print()
-    print()
     print('===========================================')
     print(f'NELBO: {nelbo:.6f} | SSIM: {ssim:.6f}')
     return io_pairs
@@ -185,35 +183,6 @@ def generate(net: model):
             print(f'Step: {step:04d}', end='\r')
         all_outputs.append(temp_outputs)
     return all_outputs
-
-
-def encode(net: model, dataset: DataLoader, latents_folder: str = None):
-    if os.path.isfile(os.path.join(latents_folder, 'div_stats.npy')):
-        div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
-        variate_masks = get_variate_masks(div_stats)
-    else:
-        variate_masks = None
-
-    encodings = {'images': {}, 'latent_codes': {}}
-    net.eval()
-    print('Starting Encoding mode \n')
-    with torch.no_grad():
-        for step, (inputs, filenames) in enumerate(tqdm(dataset)):
-            inputs = inputs.to(device, non_blocking=True)
-
-            _, computed, _ = reconstruction_step(net, inputs, variates_masks=variate_masks)
-
-            """
-            # If the mask states all variables of a layer are not effective we don't collect any latents from that layer
-            # n_layers , batch_size, [H, W, n_variates, 2]
-            dist_dict = {}
-            for i, (dist_list, variate_mask) in enumerate(zip(posterior_dist_list, variate_masks)):
-                if variate_mask.any():
-                    x = reshape_distribution(dist_list, variate_mask).detach().cpu().numpy()
-                    v = {name: xa for name, xa in zip(filenames, list(x))}
-                    dist_dict[i] = v
-            """
-    return computed
 
 
 def train_step(net: model, optimizer, inputs, step_n):
@@ -377,10 +346,11 @@ def compute_per_dimension_divergence_stats(net: model, dataset: DataLoader) -> t
     with torch.no_grad():
         for step, inputs in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
-            output, computed, kl_divs = net(inputs)
+            _, _, kl_divs = net(inputs)
             kl_div = torch.stack(list(map(lambda y: y[1], kl_divs)), dim=0)
-
             per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
+            if step > synthesis_params.div_stats_subset_ratio * len(dataset):
+                break
     per_dim_divs /= (step + 1)
     return per_dim_divs
 

@@ -16,9 +16,9 @@ class Interpolate(nn.Module):
         return x
 
 
-class Unpoolayer(nn.Module):
+class UnpooLayer(nn.Module):
     def __init__(self, in_filters, filters, strides):
-        super(Unpoolayer, self).__init__()
+        super(UnpooLayer, self).__init__()
         self.scale_bias = None
         self.filters = filters
 
