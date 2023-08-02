@@ -54,7 +54,7 @@ model_params = Hyperparams(
     device='cuda',
 
     # run.name: Mandatory argument, used to identify runs for save and restore
-    name='cifar10_baseline',
+    name='TDVAE',
     # run.seed: seed that fixes all randomness in the project
     seed=420,
 
