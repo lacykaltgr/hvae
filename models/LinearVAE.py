@@ -1,6 +1,6 @@
-from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
-from src.hvae import hVAE as hvae
 import data
+from src.block import InputBlock, OutputBlock, TopBlock
+from src.hvae import hVAE as hvae
 
 
 def _model():

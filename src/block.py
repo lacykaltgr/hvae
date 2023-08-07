@@ -1,19 +1,19 @@
+from typing import List
+
 import numpy as np
 import torch
 from torch import nn
-from typing import List
 from torch import tensor
 
-from elements.losses import KLDivergence
-from elements.layers import GaussianLatentLayer
-from elements.models import get_model
+from src.elements.nets import get_net
+from src.elements.samplers import GaussianSampler
 
 
 class _Block(nn.Module):
     def __init__(self, input_id: str or List[str] = None):
         super(_Block, self).__init__()
         self.input = input_id
-        self.output = self.input + "_out"
+        self.output = self.input + "_out" if self.input is not None else None
 
     def set_output(self, output: str) -> None:
         self.output = output
@@ -57,7 +57,7 @@ class OutputBlock(_Block):
 
     def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
-            raise ValueError("Input {} not found in computed".format(self.input))
+            raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
@@ -71,7 +71,7 @@ class EncBlock(_Block):
 
     def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
-            raise ValueError("Input {} not found in computed".format(self.input))
+            raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
@@ -80,23 +80,26 @@ class EncBlock(_Block):
 
 class SimpleDecBlock(_Block):
 
-    gaussian_diag_samples = GaussianLatentLayer()
+    gaussian_diag_samples = GaussianSampler()
 
-    def __init__(self, net, input: str):
+    def __init__(self, net,
+                 input: str,
+                 output_distribution: str = 'normal'):
         super(SimpleDecBlock, self).__init__(input)
-        self.prior_net = get_model(net)
+        self.prior_net = get_net(net)
+        self.output_distribution = output_distribution
 
     def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv)
+        z = self.draw_gaussian_diag_samples(pm, pv, self.output_distribution)
         return z
 
     def forward(self, computed: dict) -> (tensor, dict, tuple):
         if self.input not in computed:
-            raise ValueError("Input {} not found in computed".format(self.input))
+            raise ValueError(f"Input {self.input} not found in computed")
         x = computed[self.input]
         z = self._sample_uncond(x)
         computed[self.output] = z
@@ -111,48 +114,46 @@ class SimpleDecBlock(_Block):
 
 class DecBlock(SimpleDecBlock):
 
-    kl_divergence = KLDivergence()
-
     def __init__(self,
                  prior_net,
                  posterior_net,
-                 input_id: str, condition: str):
-        super(DecBlock, self).__init__(prior_net, input_id)
-        self.prior_net = get_model(prior_net)
-        self.posterior_net = get_model(posterior_net)
+                 input_id: str, condition: str,
+                 output_distribution: str = 'normal'):
+        super(DecBlock, self).__init__(prior_net, input_id, output_distribution)
+        self.prior_net = get_net(prior_net)
+        self.posterior_net = get_net(posterior_net)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
-        z = self.draw_gaussian_diag_samples(qm, qv)
+        z = self.draw_gaussian_diag_samples(qm, qv, self.output_distribution)
 
         if variate_mask is not None:
             z_prior = self.draw_gaussian_diag_samples(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
-        kl = self.kl_divergence(qm, pm, qv, pv)
-        return z, kl
+        return z, (qm, qv, pm, pv)
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv)
+        z = self.draw_gaussian_diag_samples(pm, pv, self.output_distribution)
         return z
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
         if self.input not in computed:
-            raise ValueError("Input {} not found in computed".format(self.input))
+            raise ValueError(f"Input {self.input} not found in computed")
         if self.condition not in computed:
-            raise ValueError("Condition {} not found in computed".format(self.condition))
+            raise ValueError(f"Condition {self.condition} not found in computed")
         x = computed[self.input]
         cond = computed[self.condition]
-        z, kl = self._sample(x, cond, variate_mask)
+        z, distributions = self._sample(x, cond, variate_mask)
         computed[self.output] = z
-        return z, computed, kl
+        return z, computed, distributions
 
     def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
         x = computed[self.input]
@@ -174,11 +175,10 @@ class DecBlock(SimpleDecBlock):
 class TopBlock(DecBlock):
     def __init__(self, net,
                  prior_trainable: bool,
-                 condition: str):
-
-        super(TopBlock, self).__init__(None, net, 'trainable_h', condition)
-
-        H, W, C = None, None, None
+                 condition: str,
+                 output_distribution: str = 'normal'):
+        super(TopBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
+        H, W, C = 200, 2, 3
         #TODO: itt fent hparamsból kell valami
         if prior_trainable:
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
@@ -190,12 +190,12 @@ class TopBlock(DecBlock):
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
         if self.condition not in computed:
-            raise ValueError("Condition {} not found in computed".format(self.condition))
+            raise ValueError(f"Condition {self.condition} not found in computed")
         x = self.trainable_h
         cond = computed[self.condition]
-        z, kl = self._sample(x, cond)
+        z, distributions = self._sample(x, cond)
         computed[self.output] = z
-        return z, computed, kl
+        return z, computed, distributions
 
     def sample_from_prior(self, batch_size: int, t: int or float = None) -> (tensor, dict):
         y = torch.tile(self.trainable_h, (batch_size, 1, 1, 1))
@@ -211,27 +211,27 @@ class ResidualDecBlock(DecBlock):
                  prior_net,
                  posterior_net,
                  z_projection,
-                 input, condition):
-        super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition)
-        self.net = get_model(net)
-        self.prior_net = get_model(prior_net)
-        self.posterior_net = get_model(posterior_net)
-        self.z_projection = get_model(z_projection)
+                 input, condition,
+                 output_distribution: str = 'normal'):
+        super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
+        self.net = get_net(net)
+        self.prior_net = get_net(prior_net)
+        self.posterior_net = get_net(posterior_net)
+        self.z_projection = get_net(z_projection)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
 
-        z = self.draw_gaussian_diag_samples(qm, qv)
+        z = self.draw_gaussian_diag_samples(qm, qv, output_distribution=self.output_distribution)
 
         if variate_mask is not None:
             z_prior = self.draw_gaussian_diag_samples(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual
-        kl = self.gaussian_analytical_kl(qm, pm, qv, pv)
-        return z, y, kl
+        return z, y, (qm, qv, pm, pv)
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
         y_prior = self.prior_net(y)
@@ -239,17 +239,17 @@ class ResidualDecBlock(DecBlock):
         y = y + kl_residual
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv)
+        z = self.draw_gaussian_diag_samples(pm, pv, output_distribution=self.output_distribution)
         return z, y
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
-        z, x, kl = self._sample(x, cond, variate_mask)
+        z, x, distributions = self._sample(x, cond, variate_mask)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
-        return x, computed, kl
+        return x, computed, distributions
 
     def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
         x = computed[self.input]

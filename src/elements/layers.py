@@ -1,9 +1,8 @@
-import torch.nn as nn
+import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-import numpy as np
-from hparams import *
 
 
 class Interpolate(nn.Module):
@@ -37,7 +36,7 @@ class UnpooLayer(nn.Module):
 
     def reset_parameters(self, inputs):
         B, C, H, W = inputs.shape
-        self.scale_bias = nn.Parameter(torch.zeros(size=(1, C, H, W), device='cuda'), requires_grad=True)
+        self.scale_bias = nn.Parameter(torch.zeros(size=(1, C, H, W), device='cpu'), requires_grad=True)
 
     def forward(self, x):
         x = self.ops(x)
@@ -77,7 +76,6 @@ class Conv2d(nn.Conv2d):
 
         self.stride = stride
 
-        self.condition = np.sum(self.pad_values) != 0
         super(Conv2d, self).__init__(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -93,48 +91,7 @@ class Conv2d(nn.Conv2d):
             init.zeros_(self.bias)
 
     def forward(self, x):
-        if self.condition:
-            x = F.pad(x, self.pad_values)
         x = super(Conv2d, self).forward(x)
         return x
 
 
-class GaussianLatentLayer(nn.Module):
-    def __init__(self, in_filters=0, num_variates=0, min_std=np.exp(-2)):
-        super(GaussianLatentLayer, self).__init__()
-
-        self.projection = torch.nn.Conv2d(
-            in_channels=in_filters,
-            out_channels=num_variates * 2,
-            kernel_size=(1, 1),
-            stride=(1, 1),
-            padding='same'
-        )
-
-        self.softplus = torch.nn.Softplus(beta=model_params.gradient_smoothing_beta)
-
-    def forward(self, mean, std, temperature=None, prior_stats=None, projection=None):
-        if projection is not None:
-            x = torch.cat([mean, std], dim=1)
-            x = self.projection(x)
-            mean, std = torch.chunk(x, chunks=2, dim=1)
-
-        if model_params.distribution_base == 'std':
-            std = self.softplus(std)
-        elif model_params.distribution_base == 'logstd':
-            std = torch.exp(model_params.gradient_smoothing_beta * std)
-
-        #TODO: var vagy std különbség? gyököt vonni vagy nem?
-
-        if temperature is not None:
-            std = std * temperature
-
-        return self.calculate_z(mean, std)
-
-    @staticmethod
-    @torch.jit.script
-    def calculate_z(mean, std):
-        #TODO: más eloszlások esetleg?
-        eps = torch.empty_like(mean, device=torch.device('cuda')).normal_(0., 1.)
-        z = eps * std + mean
-        return z

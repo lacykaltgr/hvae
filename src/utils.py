@@ -1,11 +1,11 @@
-from torch.utils.tensorboard import SummaryWriter
-import torch
-import numpy as np
-
-from hparams import *
 import os
+import logging
 
+import numpy as np
+import torch
+from torch.utils.tensorboard import SummaryWriter
 
+from hparams import get_hparams
 """
 -------------------
 MODEL UTILS
@@ -13,15 +13,11 @@ MODEL UTILS
 """
 
 
-def scale_pixels(img):
-    img = np.floor(img / np.uint8(2 ** (8 - data_params.num_bits))) * 2 ** (8 - data_params.num_bits)
+def scale_pixels(img, data_num_bits):
+    img = np.floor(img / np.uint8(2 ** (8 - data_num_bits))) * 2 ** (8 - data_num_bits)
     shift = scale = (2 ** 8 - 1) / 2
     img = (img - shift) / scale  # Images are between [-1, 1]
     return img
-
-
-def effective_pixels():
-    return data_params.target_res * data_params.target_res * data_params.channels
 
 
 def one_hot(indices, depth, dim):
@@ -35,7 +31,8 @@ def one_hot(indices, depth, dim):
 
 
 def get_variate_masks(stats):
-    thresh = np.quantile(stats, 1 - synthesis_params.variates_masks_quantile)
+    p = get_hparams()
+    thresh = np.quantile(stats, 1 - p.synthesis_params.variates_masks_quantile)
     return stats > thresh
 
 
@@ -53,6 +50,11 @@ def linear_temperature(min_temp, max_temp, n_layers):
 TRAIN/LOG UTILS
 -------------------
 """
+
+
+def get_experiment_dir():
+    p = get_hparams()
+    return f'{p.model_params.dir}{p.model_params.name}'
 
 
 def tensorboard_log(model, optimizer, global_step, writer,
@@ -80,6 +82,9 @@ def tensorboard_log(model, optimizer, global_step, writer,
             assert global_norm is not None
             writer.add_scalar("Mean_Max_Updates/Global_norm", global_norm, global_step)
             writer.add_scalar("Mean_Max_Updates/Max_updates", max_updates, global_step)
+
+    # Save artifacts
+    plot_image(outputs[0], targets[0], global_step, writer=writer)
     writer.flush()
 
 
@@ -88,35 +93,40 @@ def plot_image(outputs, targets, step, writer):
     writer.add_image(f"{step}/Generated_{step}", outputs, step)
 
 
-def load_checkpoint_if_exists(checkpoint_path, rank=0):
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location=f'cuda:{rank}')
-    except FileNotFoundError:
-        checkpoint = {'global_step': -1,
-                      'model_state_dict': None,
-                      'ema_model_state_dict': None,
-                      'optimizer_state_dict': None,
-                      'scheduler_state_dict': None}
-    return checkpoint
+def load_experiment_for(mode: str = 'test'):
+    p = get_hparams()
+    if mode == 'test':
+        experiment_directory = p.eval_params.load_from
+    elif mode == 'train':
+        experiment_directory = p.train_params.load_from
+    elif mode == 'synthesis':
+        experiment_directory = p.synthesis_params.load_from
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+    # not load experiment
+    if experiment_directory is None:
+        return None
+
+    # load latest experiment
+    if experiment_directory == '' or experiment_directory == 'latest':
+        experiment_directory = sorted(os.listdir(get_experiment_dir()))[-1]
+
+    path = os.path.join(get_experiment_dir(), experiment_directory)
+    os.makedirs(path, exist_ok=True)
+
+    file_path = os.path.join(path, 'experiment.pt')
+    experiment = torch.load(file_path) if os.path.exists(file_path) else None
+    return experiment, path
 
 
-def create_checkpoint_manager_and_load_if_exists(model_directory='.', rank=0):
-    checkpoint_path = os.path.join(model_directory, f'checkpoints-{model_params.name}')
-    checkpoint = load_checkpoint_if_exists(checkpoint_path, rank)
-    return checkpoint, checkpoint_path
-
-
-def get_logdir():
-    return f'logs-{model_params.name}'
-
-
-def create_tb_writer(mode):
-    logdir = get_logdir()
+def create_tb_writer_for(mode: str, checkpoint_path: str):
+    logdir = os.path.join(checkpoint_path, 'tensorboard')
     tbdir = os.path.join(logdir, mode)
     os.makedirs(logdir, exist_ok=True)
     os.makedirs(tbdir, exist_ok=True)
     writer = SummaryWriter(log_dir=tbdir)
-    return writer, logdir
+    return writer
 
 
 def write_image_to_disk(filepath, image):
@@ -129,4 +139,38 @@ def write_image_to_disk(filepath, image):
     image = np.transpose(image, (1, 2, 0))
     im = Image.fromarray(image)
     im.save(filepath, format='png')
+
+
+def setup_logger(checkpoint_path: str) -> logging.Logger:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger('logger')
+    file_handler = logging.FileHandler(os.path.join(checkpoint_path, 'log.txt'))
+    logger.addHandler(file_handler)
+    return logger
+
+
+def detach_all(results: dict):
+    for key, value in results.items():
+        if isinstance(value, torch.Tensor):
+            results[key] = value.detach().cpu().item()
+        elif isinstance(value, list):
+            results[key] = list(map(lambda x: x.detach().cpu(), value))
+    return results
+
+
+def prepare_for_log(results: dict):
+    p = get_hparams()
+    losses = dict(
+        reconstruction_loss=results["reconstruction_loss"],
+        kl_div=results["kl_div"],
+        nelbo=results['elbo'],
+        train_var_loss=np.sum([v for v in results["avg_var_prior_losses"]]),
+        n_active_groups=np.sum([v >= p.eval_params.latent_active_threshold
+                                  for v in results["avg_var_prior_losses"]])
+    )
+    losses = detach_all(losses)
+    losses["means"] = results["means"].detach().cpu(),
+    losses["log_scales"] = results["log_scales"].detach().cpu(),
+    losses.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
+    return losses
 

@@ -1,6 +1,6 @@
+import data
 from src.block import *
 from src.hvae import hVAE as hvae
-import data
 
 
 def _model():

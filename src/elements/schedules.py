@@ -1,8 +1,33 @@
+import warnings
+
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
-import warnings
-from hparams import *
+
+from hparams import get_hparams
+
+
+def get_gamma_schedule():
+    params = get_hparams()
+    return GammaSchedule(max_steps=params.loss_params.gamma_max_steps,
+                         num_groups=params.optimizer_params.gamma_n_groups,
+                         scaled_gamma=params.loss_params.scaled_gamma) \
+        if params.loss_params.use_gamma_schedule \
+        else None
+
+
+def get_beta_schedule():
+    params = get_hparams()
+    return LogisticBetaSchedule(
+        activation_step=params.loss_params.vae_beta_activation_steps,
+        growth_rate=params.loss_params.vae_beta_growth_rate) \
+        if params.loss_params.variation_schedule == 'Logistic' \
+        else LinearBetaSchedule(
+        anneal_start=params.loss_params.vae_beta_anneal_start,
+        anneal_steps=params.loss_params.vae_beta_anneal_steps,
+        beta_min=params.loss_params.vae_beta_min) \
+        if params.loss_params.variation_schedule == 'Linear' \
+        else lambda x: torch.as_tensor(1.)
 
 
 def get_schedule(optimizer, decay_scheme, warmup_steps, decay_steps, decay_rate, decay_start,
@@ -62,9 +87,10 @@ class LinearBetaSchedule:
 
 
 class GammaSchedule:
-    def __init__(self, max_steps):
+    def __init__(self, max_steps, num_groups, scaled_gamma=False):
         self.max_steps = max_steps
-        self.num_groups = optimizer_params.gamma_n_groups
+        self.num_groups = num_groups
+        self.scaled_gamma = scaled_gamma
         # TODO:= sum(model.down_n_blocks_per_res) + len(model.down_strides) ??
 
     def __call__(self, kl_losses, avg_kl_losses, step_n, epsilon=0.):
@@ -72,7 +98,7 @@ class GammaSchedule:
         assert kl_losses.size() == avg_kl_losses.size() == (self.num_groups,)
 
         if step_n <= self.max_steps:
-            if loss_params.scaled_gamma:
+            if self.scaled_gamma:
                 alpha_hat = (avg_kl_losses + epsilon)
             else:
                 alpha_hat = kl_losses + epsilon

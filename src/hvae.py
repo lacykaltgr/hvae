@@ -1,9 +1,9 @@
-import copy
-from torch import nn
-from model import train, reconstruct, generate, compute_per_dimension_divergence_stats
 import torch
+from torch import nn
 from torch import tensor
-from block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
+
+from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
+from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate
 
 
 class Encoder(nn.Module):
@@ -25,7 +25,7 @@ class Decoder(nn.Module):
         self._decoder_blocks = decoder_blocks
 
     def forward(self, computed: dict, variate_masks: list = None) -> (tensor, dict, list):
-        kl_divs = []
+        distributions = []
         output = None
 
         if variate_masks is None:
@@ -34,9 +34,9 @@ class Decoder(nn.Module):
 
         for block, variate_mask in zip(self._decoder_blocks, variate_masks):
             args = [computed] if isinstance(block, DecBlock) else [computed, variate_mask]
-            output, computed, kl_div = block(*args)
-            kl_divs.append(kl_div)
-        return output, computed, kl_divs
+            output, computed, dists = block(*args)
+            distributions.append(dists)
+        return output, computed, distributions
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
@@ -49,40 +49,53 @@ class hVAE(nn.Module):
     def __init__(self, blocks: dict, device: str = "cuda"):
         super(hVAE, self).__init__()
 
+        self.encoder = dict()
+        self.decoder = dict()
+
         for block in blocks:
             blocks[block].set_output(block)
-        encoder_blocks = dict(filter(lambda block: isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)), blocks))
-        decoder_blocks = dict(filter(lambda block: isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)), blocks))
+            if isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)):
+                self.encoder.update({block: blocks[block]})
+            elif isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)):
+                self.decoder.update({block: blocks[block]})
+            else:
+                raise ValueError(f"Unknown block type {type(blocks[block])}")
 
-        self.encoder = Encoder(encoder_blocks)
-        self.decoder = Decoder(decoder_blocks)
-        self.ema_model = copy.deepcopy(self)
-
+        self.encoder = Encoder(self.encoder)
+        self.decoder = Decoder(self.decoder)
         self.device = device
 
     def compute(self, block_name) -> (tensor, dict):
         pass
 
-    def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
-        return reconstruct(self, dataset, artifacts_folder, latents_folder)
+    def summary(self):
+        self.to_string()
 
-    def generate(self):
-        return generate(self)
+    #def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
+    #    return reconstruct(self, dataset, artifacts_folder, latents_folder)
 
-    def kldiv_stats(self, dataset):
-        return compute_per_dimension_divergence_stats(self, dataset)
+    #def generate(self):
+    #    return generate(self)
 
-    def train_model(self, optimizer, schedule,
-                    train_loader, val_loader, checkpoint,
-                    writer_train, writer_val, checkpoint_path):
-        train(self, optimizer, schedule,
-              train_loader, val_loader, checkpoint['global_step'],
-              writer_train, writer_val, checkpoint_path)
+    #def kldiv_stats(self, dataset):
+    #    return compute_per_dimension_divergence_stats(self, dataset)
 
-    def sample(self, logits) -> tensor:
-        from model import sample_from_mol
-        samples = sample_from_mol(logits)
-        return samples
+    #def train_model(self, optimizer, schedule,
+    #                train_loader, val_loader, checkpoint,
+    #                writer_train, writer_val, checkpoint_path, logger=None):
+    #    if logger is None:
+    #        from utils import setup_logger
+    #        logger = setup_logger(checkpoint_path)
+    #    train(self, optimizer, schedule,
+    #          train_loader, val_loader, checkpoint['global_step'],
+    #          writer_train, writer_val, checkpoint_path, logger)
+
+    #def test_model(self, test_loader):
+    #    return evaluate(self, test_loader)
+
+    #def sample(self, logits) -> tensor:
+    #    samples = sample(logits)
+    #    return samples
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
@@ -90,14 +103,8 @@ class hVAE(nn.Module):
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
         _, computed = self.encoder(x)
-        output, computed, kl_divs = self.decoder(computed, variate_masks)
-        return output, computed, kl_divs
-
-    def update_ema(self, ema_rate):
-        for p1, p2 in zip(self.parameters(), self.ema_model.parameters()):
-            # Beta * previous ema weights + (1 - Beta) * current non ema weight
-            p2.data.mul_(ema_rate)
-            p2.data.add_(p1.data * (1 - ema_rate))
+        output, computed, distributions = self.decoder(computed, variate_masks)
+        return output, computed, distributions
 
     #TODO
     def visualize_graph(self) -> None:

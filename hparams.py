@@ -1,22 +1,23 @@
+def get_hparams():
+    # SET WHICH params TO USE HERE
+    # |    |    |    |    |    |
+    # v    v    v    v    v    v
+    import models.TDVAE as params
 
-# SET WHICH MODEL TO USE HERE
-# |    |    |    |    |    |
-# v    v    v    v    v    v
-import models.TDVAE as model
+    return Hyperparams(
+        model_params=params.model_params,
+        data_params=params.data_params,
+        train_params=params.train_params,
+        optimizer_params=params.optimizer_params,
+        loss_params=params.loss_params,
+        eval_params=params.eval_params,
+        synthesis_params=params.synthesis_params,
 
-optimizer_params = model.optimizer_params
-loss_params = model.loss_params
-model_params = model.model_params
-data_params = model.data_params
-train_params = model.train_params
-eval_params = model.eval_params
-synthesis_params = model.synthesis_params
-
-mlp_params = model.mlp_params
-conv_params = model.conv_params
-pool_params = model.pool_params
-unpool_params = model.unpool_params
-# ^    ^    ^    ^    ^    ^
+        mlp_params=params.mlp_params,
+        conv_params=params.cnn_params,
+        pool_params=params.pool_params,
+        unpool_params=params.unpool_params,
+    )
 
 
 class Hyperparams:
@@ -24,8 +25,16 @@ class Hyperparams:
         self.config = config
 
     def __getattr__(self, name):
+        if name == 'config':
+            return super().__getattribute__(name)
         return self.config[name]
 
     def __setattr__(self, name, value):
-        self.config[name] = value
+        if name == 'config':
+            super().__setattr__(name, value)
+        else:
+            self.config[name] = value
+
+    def keys(self):
+        return self.config.keys()
 

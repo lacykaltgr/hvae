@@ -1,8 +1,10 @@
-from src.elements.dataset import _DataSet
 import os
+
 import numpy as np
-from hparams import *
 from sklearn.utils import shuffle
+
+from hparams import *
+from src.elements.dataset import _DataSet
 
 
 class ImageNetDataSet(_DataSet):

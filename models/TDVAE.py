@@ -1,9 +1,6 @@
-from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
-from src.hvae import hVAE as hvae
-import data
-
-
 def _model():
+    from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
+    from src.hvae import hVAE as hvae
 
     _blocks = dict(
         x=InputBlock(
@@ -23,6 +20,7 @@ def _model():
             posterior_net=z_posterior_net,
             input_id="y",
             condition="hiddens",
+            output_distribution="normal"
         ),
         x_hat=OutputBlock(
             net=z_to_x_net,
@@ -52,10 +50,8 @@ MODEL HYPERPARAMETERS
 model_params = Hyperparams(
     model=_model,
     device='cuda',
-
-    # run.name: Mandatory argument, used to identify runs for save and restore
+    dir='experiments/',
     name='TDVAE',
-    # run.seed: seed that fixes all randomness in the project
     seed=420,
 
     # Whether to initialize the prior latent layer as zeros (no effect)
@@ -66,6 +62,7 @@ model_params = Hyperparams(
     # std (with softplus) or logstd (std is computed with exp(logstd)).
     distribution_base='std',
     # Similarly for output layer
+    output_distribution='mol',
     output_distribution_base='std',
     num_output_mixtures=10,
 
@@ -81,10 +78,11 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
+import data.cifar10 as cifar10
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=data.cifar10.CIFARDataset(),
+    dataset=cifar10.CIFARDataset(),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -106,19 +104,17 @@ TRAINING HYPERPARAMETERS
 --------------------
 """
 train_params = Hyperparams(
+    load_checkpoint='2020-12-08_17-00-00',
+
     # The total number of training updates
     total_train_steps=800000,
     # training batch size
     batch_size=32,
 
-    # Exponential Moving Average
-    ema_decay=0.9999,
-    # Whether to resume the model training from its EMA weights
-    # (highly experimental, not recommended)
-    resume_from_ema=False,
-
     # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
-    checkpoint_and_eval_interval_in_steps=10000,
+    checkpoint_interval_in_steps=10000,
+    tensorboard_log_interval_in_steps=1000,
+    eval_interval_in_steps=10000,
 )
 
 """
@@ -127,6 +123,8 @@ EVALUATION HYPERPARAMETERS
 --------------------
 """
 eval_params = Hyperparams(
+    load_timestamp='2020-12-08_17-00-00',
+
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
     #TODO: implement
@@ -145,11 +143,11 @@ SYNTHESIS HYPERPARAMETERS
 --------------------
 """
 synthesis_params = Hyperparams(
+    load_timestamp='2020-12-08_17-00-00',
+
     # The synthesis mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
     synthesis_mode='reconstruction',
 
-    # Whether to use the EMA weights for inference
-    load_ema_weights=True,
     # Reconstruction/Encoding mode
     # --------------------
     # Defines the quantile at which to prune the latent space (section 7). Example:
@@ -254,10 +252,10 @@ optimizer_params = Hyperparams(
 LOSS HYPERPARAMETERS
 --------------------
 """
-from src.elements.losses import *
 loss_params = Hyperparams(
-    reconstruction_loss=DiscMixLogistic(),
-    kldiv_loss=KLDivergence(),
+    reconstruction_loss="default",
+    kldiv_loss="default",
+    custom_loss=None,
 
     # ELBO beta warmup (from NVAE). Doesn't make much of an effect
     # but it's safe to use it to avoid posterior collapses as NVAE suggests.
@@ -293,6 +291,7 @@ loss_params = Hyperparams(
 BLOCK HYPERPARAMETERS
 --------------------
 """
+import torch
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -307,14 +306,15 @@ mlp_params = Hyperparams(
 
 cnn_params = Hyperparams(
     type="conv",
+    n_layers=2,
     in_filters=3,
     bottleneck_ratio=0.5,
     output_ratio=1.,
     kernel_size=3,
     use_1x1=True,
     init_scaler=1.,
-    pool=False,
-    unpool=False,
+    pool_strides=False,
+    unpool_strides=False,
     activation=None,
     residual=False,
 )
@@ -351,42 +351,45 @@ x_to_hiddens_net = Hyperparams(
 
 hiddens_to_y_net = Hyperparams(
     type="conv",
+    n_layers=2,
     in_filters=3,
     bottleneck_ratio=0.5,
     output_ratio=0.5,
     kernel_size=3,
     use_1x1=True,
     init_scaler=1.,
-    pool=False,
-    unpool=False,
+    pool_strides=False,
+    unpool_strides=False,
     activation=None,
     residual=False,
 )
 
 z_prior_net = Hyperparams(
     type="conv",
+    n_layers=2,
     in_filters=3,
     bottleneck_ratio=0.5,
     output_ratio=0.5,
     kernel_size=3,
     use_1x1=True,
     init_scaler=1.,
-    pool=False,
-    unpool=False,
+    pool_strides=False,
+    unpool_strides=False,
     activation=None,
     residual=False,
 )
 
 z_posterior_net = Hyperparams(
     type="conv",
+    n_layers=2,
     in_filters=3,
     bottleneck_ratio=0.5,
     output_ratio=0.5,
     kernel_size=3,
     use_1x1=True,
     init_scaler=1.,
-    pool=False,
-    unpool=False,
+    pool_strides=False,
+    unpool_strides=False,
     activation=None,
     residual=False,
 )

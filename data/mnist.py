@@ -1,8 +1,9 @@
-from src.elements.dataset import _DataSet
 import numpy as np
-from sklearn.utils import shuffle
-import torch
 import tensorflow as tf
+import torch
+from sklearn.utils import shuffle
+
+from src.elements.dataset import _DataSet
 
 
 class MNISTDataSet(_DataSet):

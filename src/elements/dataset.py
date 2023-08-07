@@ -1,10 +1,12 @@
-import torch
-from torch.utils.data import Dataset as TorchDataset
-import torchvision.transforms as transforms
 from enum import Enum
+
 import numpy as np
+import torch
+import torchvision.transforms as transforms
 from PIL import Image
-from hparams import *
+from torch.utils.data import Dataset as TorchDataset
+
+from hparams import get_hparams
 
 
 class DataSetState(Enum):

@@ -1,24 +1,24 @@
-from layers import *
-from hparams import *
-from torch import nn
+from src.elements.layers import *
+from hparams import get_hparams, Hyperparams
 
 
-# TODO
-def get_model(model):
+def get_net(model):
+    params = get_hparams()
+
     if model is None:
-        return nn.Sequential()
+        return lambda x: x
 
     elif isinstance(model, str):
         # Load model from default
         if model == 'mlp':
-            return nn.Sequential(MLPNet.from_hparams(mlp_params))
+            return nn.Sequential(MLPNet.from_hparams(params.mlp_params))
         elif model == 'conv':
-            return nn.Sequential(ConvNet.from_hparams(conv_params))
+            return nn.Sequential(ConvNet.from_hparams(params.cnn_params))
         else:
             raise NotImplementedError("Model type not supported.")
     elif isinstance(model, Hyperparams):
         # Load model from hyperparameter config
-        if "type" not in model:
+        if "type" not in model.keys():
             raise ValueError("Model type not specified.")
         if model.type == 'mlp':
             return nn.Sequential(MLPNet.from_hparams(model))
@@ -33,7 +33,7 @@ def get_model(model):
 
     elif isinstance(model, list):
         # Load model from list
-        return nn.Sequential(*list(map(get_model, model)))
+        return nn.Sequential(*list(map(get_net, model)))
 
     else:
         raise NotImplementedError("Model type not supported.")
@@ -68,7 +68,7 @@ class MLPNet(nn.Module):
         return outputs
 
     @staticmethod
-    def from_hparams(hparams):
+    def from_hparams(hparams: Hyperparams):
         return MLPNet(
             input_size=hparams.input_size,
             hidden_sizes=hparams.hidden_sizes,
@@ -81,7 +81,7 @@ class MLPNet(nn.Module):
 #TODO: pool parameterezhető legyen
 class ConvNet(nn.Module):
     def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
-                 , residual=True, use_1x1=True, pool=False, unpool=False, output_ratio=1.0, activation=None):
+                 , residual=True, use_1x1=True, pool_strides=0, unpool_strides=0, output_ratio=1.0, activation=nn.SiLU()):
         super(ConvNet, self).__init__()
 
         self.residual = residual
@@ -96,14 +96,14 @@ class ConvNet(nn.Module):
         bottlneck_filters = int(in_filters * bottleneck_ratio)
 
         convs = []
-        if pool:
+        if pool_strides > 0:
             convs.append(PoolLayer(
                 in_filters=in_filters,
                 filters=output_filters,
-                strides=pool_params.strides,
+                strides=pool_strides,
             ))
 
-        convs += [nn.SiLU(inplace=False),
+        convs += [activation,
                   nn.Conv2d(in_channels=in_filters,
                             out_channels=bottlneck_filters,
                             kernel_size=(1, 1) if use_1x1 else kernel_size,
@@ -111,14 +111,14 @@ class ConvNet(nn.Module):
                             padding='same')]
 
         for _ in range(n_layers):
-            convs.append(nn.SiLU(inplace=False))
+            convs.append(activation)
             convs.append(Conv2d(in_channels=bottlneck_filters,
                                 out_channels=bottlneck_filters,
                                 kernel_size=kernel_size,
                                 stride=(1, 1),
                                 padding='same'))
 
-        convs += [nn.SiLU(inplace=False),
+        convs += [activation,
                   Conv2d(in_channels=bottlneck_filters,
                          out_channels=output_filters,
                          kernel_size=(1, 1) if use_1x1 else kernel_size,
@@ -127,11 +127,11 @@ class ConvNet(nn.Module):
 
         convs[-1].weight.data *= init_scaler
 
-        if unpool:
+        if unpool_strides > 0:
             convs.append(UnpooLayer(
                 in_filters=output_filters,
                 filters=output_filters,
-                strides=pool_params.strides,
+                strides=unpool_strides,
             ))
 
         self.convs = nn.Sequential(*convs)
@@ -158,8 +158,8 @@ class ConvNet(nn.Module):
             kernel_size=hparams.kernel_size,
             init_scaler=hparams.init_scaler,
             use_1x1=hparams.use_1x1,
-            pool=hparams.pool,
-            unpool=hparams.unpool,
+            pool_strides=hparams.pool_strides,
+            unpool_strides=hparams.unpool_strides,
             activation=hparams.activation,
             residual=hparams.residual,
         )

@@ -1,7 +1,9 @@
-from src.elements.dataset import _DataSet, DataSetState
 import os
+
 from PIL import Image
+
 from hparams import *
+from src.elements.dataset import _DataSet, DataSetState
 
 
 class GenericDataSet(_DataSet):

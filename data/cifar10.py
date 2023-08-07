@@ -1,7 +1,8 @@
-from src.elements.dataset import _DataSet
-from sklearn.utils import shuffle
 import numpy as np
 import tensorflow as tf
+from sklearn.utils import shuffle
+
+from src.elements.dataset import _DataSet
 
 
 class CIFARDataset(_DataSet):
