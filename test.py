@@ -13,9 +13,9 @@ def main():
 
     model = p.model_params.model()
     with torch.no_grad():
-        _ = model(torch.ones((1, p.data_params.channels, p.data_params.target_res, p.data_params.target_res)))
+        _ = model(torch.ones((1, *p.data_params.shape)))
 
-    assert checkpoint['model_state_dict'] is not None
+    assert checkpoint.model is not None
     model.load_state_dict(checkpoint['model_state_dict'])
     logger.info('Model Checkpoint is loaded')
 

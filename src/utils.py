@@ -1,6 +1,7 @@
 import os
 import logging
 
+import numpy
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -52,16 +53,47 @@ TRAIN/LOG UTILS
 """
 
 
-def get_experiment_dir():
-    p = get_hparams()
-    return f'{p.model_params.dir}{p.model_params.name}'
+def get_load_from_dir(mode='train'):
+    p = get_hparams().log_params
+    if mode == 'test':
+        load_from = p.load_from_eval
+    elif mode == 'train':
+        load_from = p.load_from_train
+    elif mode == 'synthesis':
+        load_from = p.load_from_synthesis
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+    dir = f'{p.dir}{p.name}'
+
+    # load latest experiment
+    if load_from == 'latest':
+        load_from = sorted(os.listdir(dir))[-1]
+    load_from = "" if load_from is None else load_from
+    return f'{dir}/{load_from}'
+
+
+def get_save_to_dir():
+    import datetime
+    p = get_hparams().log_params
+    if p.dir_naming_scheme == 'timestamp':
+        dir = f"{p.dir}{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        os.makedirs(dir, exist_ok=True)
+        return dir
+    else:
+        dir = f"{p.dir}{p.name}/{p.dir_naming_scheme}"
+        os.makedirs(dir, exist_ok=True)
+        return dir
+    #else:
+    #    raise NotImplementedError(f"Unknown dir_naming_scheme {p.dir_naming_scheme}")
 
 
 def tensorboard_log(model, optimizer, global_step, writer,
                     losses, outputs, targets, means=None, log_scales=None,
                     updates=None, global_norm=None, mode='train'):
     for key, value in losses.items():
-        writer.add_scalar(f"Losses/{key}", value, global_step)
+        if isinstance(value, (torch.Tensor, numpy.ndarray)) and len(value.shape) == 0:
+            writer.add_scalar(f"Losses/{key}", value, global_step)
     writer.add_histogram("Distributions/target", targets, global_step, bins=20)
     writer.add_histogram("Distributions/output", torch.clamp(outputs, min=-1., max=1.), global_step, bins=20)
 
@@ -94,33 +126,16 @@ def plot_image(outputs, targets, step, writer):
 
 
 def load_experiment_for(mode: str = 'test'):
-    p = get_hparams()
-    if mode == 'test':
-        experiment_directory = p.eval_params.load_from
-    elif mode == 'train':
-        experiment_directory = p.train_params.load_from
-    elif mode == 'synthesis':
-        experiment_directory = p.synthesis_params.load_from
-    else:
-        raise ValueError(f"Unknown mode {mode}")
+    load_from = get_load_from_dir(mode)
+    save_to = get_save_to_dir()
 
-    # not load experiment
-    if experiment_directory is None:
-        experiment_directory = ''
-
-    # load latest experiment
-    if experiment_directory == 'latest':
-        experiment_directory = sorted(os.listdir(get_experiment_dir()))[-1]
-
-    path = os.path.join(get_experiment_dir(), experiment_directory)
-    os.makedirs(path, exist_ok=True)
-
-    if experiment_directory is None:
-        return None, path
-
-    file_path = os.path.join(path, 'experiment.pt')
-    experiment = torch.load(file_path) if os.path.exists(file_path) else None
-    return experiment, path
+    experiment = None
+    # load experiment from checkpoint
+    if os.path.isfile(load_from):
+        file_path = load_from
+        if os.path.isfile(file_path):
+            experiment = torch.load(file_path) if os.path.exists(file_path) else None
+    return experiment, save_to
 
 
 def create_tb_writer_for(mode: str, checkpoint_path: str):
@@ -145,35 +160,38 @@ def write_image_to_disk(filepath, image):
 
 
 def setup_logger(checkpoint_path: str) -> logging.Logger:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger('logger')
     file_handler = logging.FileHandler(os.path.join(checkpoint_path, 'log.txt'))
     logger.addHandler(file_handler)
     return logger
 
 
-def detach_all(results: dict):
-    for key, value in results.items():
-        if isinstance(value, torch.Tensor):
-            results[key] = value.detach().cpu().item()
-        elif isinstance(value, list):
-            results[key] = list(map(lambda x: x.detach().cpu(), value))
+def prepare_for_log(results: dict):
+    """
+    elbo=total_generator_loss,
+    reconstruction_loss=feature_matching_loss,
+    avg_reconstruction_loss=avg_feature_matching_loss,
+    avg_var_prior_losses=avg_global_var_prior_losses,
+    kl_div=kl_div
+    means=means,
+    log_scales=log_scales,
+    """
+
+    p = get_hparams().eval_params
+    results["elbo"] = results["elbo"].detach().cpu().item()
+    results["reconstruction_loss"] = results["reconstruction_loss"].detach().cpu().item()
+    results["kl_div"] = results["kl_div"].detach().cpu().item()
+    results["avg_reconstruction_loss"] = results["avg_reconstruction_loss"].detach().cpu().item()
+    results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
+    results["means"] = results["means"].detach().cpu().numpy()
+    results["log_scales"] = results["log_scales"].detach().cpu().numpy()
+    results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
+                                         for v in results["avg_var_prior_losses"]])
+    results.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
     return results
 
 
-def prepare_for_log(results: dict):
-    p = get_hparams()
-    losses = dict(
-        reconstruction_loss=results["reconstruction_loss"],
-        kl_div=results["kl_div"],
-        nelbo=results['elbo'],
-        train_var_loss=np.sum([v for v in results["avg_var_prior_losses"]]),
-        n_active_groups=np.sum([v >= p.eval_params.latent_active_threshold
-                                  for v in results["avg_var_prior_losses"]])
-    )
-    losses = detach_all(losses)
-    losses["means"] = results["means"].detach().cpu(),
-    losses["log_scales"] = results["log_scales"].detach().cpu(),
-    losses.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
-    return losses
+def print_line(logger: logging.Logger, newline_after: False):
+    logger.info('\n' + '-' * 89 + ('\n' if newline_after else ''))
 

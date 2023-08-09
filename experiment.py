@@ -1,27 +1,31 @@
 import torch
+import os
 
 class Experiment:
-    def __init__(self, global_step=-1, model=None, model_params=None,
-                 data_params=None, train_params=None, eval_params=None, synthesis_params=None,
-                 scheduler_state=None, optimizer_state=None, optimizer_params=None, loss_params=None):
+    def __init__(self, global_step=-1, model=None, optimizer=None, scheduler=None, params=None):
         try:
             self.global_step: int = global_step
             self.model = model
-            self.model_params = model_params
-            self.data_params = data_params
-            self.train_params = train_params
-            self.optimizer_params = optimizer_params
-            self.loss_params = loss_params
-            self.eval_params = eval_params
-            self.synthesis_params = synthesis_params
+            self.model_params = params.model_params
+            self.data_params = params.data_params
+            self.train_params = params.train_params
+            self.optimizer_params = params.optimizer_params
+            self.loss_params = params.loss_params
+            self.eval_params = params.eval_params
+            self.synthesis_params = params.synthesis_params
 
-            self.scheduler_state = scheduler_state
-            self.optimizer_state = optimizer_state
+            self.scheduler_state = scheduler.state_dict()
+            self.optimizer_state = optimizer.state_dict()
         except TypeError:
             print("Error loading experiment")
 
     def save(self, path):
+        if not os.path.isfile(path):
+            checkpoint_dir = os.path.join(path, "checkpoints")
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            path = os.path.join(checkpoint_dir, f"checkpoint-{self.global_step}.pth")
         torch.save(self, path)
+        return path
 
     @staticmethod
     def load(path):

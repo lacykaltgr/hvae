@@ -20,7 +20,6 @@ class _Block(nn.Module):
         self.output = output
 
 
-
 class ConcatBlock(_Block):
     def __init__(self, inputs: List[str], dimension: int = 1):
         super(ConcatBlock, self).__init__(inputs)
@@ -42,7 +41,6 @@ class InputBlock(_Block):
     def __init__(self, net):
         super(InputBlock, self).__init__()
         self.net: nn.Sequential = get_net(net)
-        self.dtype ='InputBlock'
 
     def forward(self, inputs: tensor) -> (tensor, dict):
         if self.net is None:
@@ -59,6 +57,7 @@ class InputBlock(_Block):
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return self.net.parameters()
 
+
 class OutputBlock(_Block):
     def __init__(self, net, input_id: str):
         super(OutputBlock, self).__init__(input_id)
@@ -70,7 +69,7 @@ class OutputBlock(_Block):
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
-        return output, computed
+        return output, computed, None
 
 
 class EncBlock(_Block):
@@ -89,7 +88,7 @@ class EncBlock(_Block):
 
 class SimpleDecBlock(_Block):
 
-    gaussian_diag_samples = GaussianSampler()
+    gaussian_sampler = GaussianSampler()
 
     def __init__(self, net,
                  input: str,
@@ -100,10 +99,10 @@ class SimpleDecBlock(_Block):
 
     def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2)
+        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv, self.output_distribution)
+        z = self.gaussian_sampler(pm, pv, self.output_distribution)
         return z
 
     def forward(self, computed: dict) -> (tensor, dict, tuple):
@@ -130,27 +129,27 @@ class DecBlock(SimpleDecBlock):
                  output_distribution: str = 'normal'):
         super(DecBlock, self).__init__(prior_net, input_id, output_distribution)
         self.prior_net: nn.Sequential = get_net(prior_net)
-        self.posterior_net : nn.Sequential = get_net(posterior_net)
+        self.posterior_net: nn.Sequential = get_net(posterior_net)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2)
-        z = self.draw_gaussian_diag_samples(qm, qv, self.output_distribution)
+        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        z = self.gaussian_sampler(qm, qv, self.output_distribution)
 
         if variate_mask is not None:
-            z_prior = self.draw_gaussian_diag_samples(pm, pv)
+            z_prior = self.gaussian_sampler(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (qm, qv, pm, pv)
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2)
+        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv, self.output_distribution)
+        z = self.gaussian_sampler(pm, pv, self.output_distribution)
         return z
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
@@ -183,15 +182,15 @@ class DecBlock(SimpleDecBlock):
 
 class TopBlock(DecBlock):
     def __init__(self, net,
+                 prior_shape: tuple,
                  prior_trainable: bool,
                  condition: str,
                  output_distribution: str = 'normal'):
         super(TopBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
-        H, W, C = 200, 2, 3
         #TODO: itt fent hparamsból kell valami
         if prior_trainable:
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
-                data=torch.empty(size=(1, C, H, W)), requires_grad=True)
+                data=torch.empty(size=prior_shape), requires_grad=True)
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
             # constant tensor with 0 values
@@ -200,7 +199,7 @@ class TopBlock(DecBlock):
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
         if self.condition not in computed:
             raise ValueError(f"Condition {self.condition} not found in computed")
-        x = self.trainable_h
+        x = torch.tile(self.trainable_h, (computed[self.condition].shape[0], 1))
         cond = computed[self.condition]
         z, distributions = self._sample(x, cond)
         computed[self.output] = z
@@ -229,12 +228,12 @@ class ResidualDecBlock(DecBlock):
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
+        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
 
-        z = self.draw_gaussian_diag_samples(qm, qv, output_distribution=self.output_distribution)
+        z = self.gaussian_sampler(qm, qv, output_distribution=self.output_distribution)
 
         if variate_mask is not None:
-            z_prior = self.draw_gaussian_diag_samples(pm, pv)
+            z_prior = self.gaussian_sampler(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual
@@ -242,11 +241,11 @@ class ResidualDecBlock(DecBlock):
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3)
+        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
         y = y + kl_residual
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.draw_gaussian_diag_samples(pm, pv, output_distribution=self.output_distribution)
+        z = self.gaussian_sampler(pm, pv, output_distribution=self.output_distribution)
         return z, y
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):

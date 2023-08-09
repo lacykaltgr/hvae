@@ -8,7 +8,7 @@ from src.elements.dataset import _DataSet
 
 class MNISTDataSet(_DataSet):
     def __init__(self):
-        super(MNISTDataSet).__init__()
+        super(MNISTDataSet, self).__init__()
 
     def load(self):
         # Ignore labels
@@ -23,14 +23,9 @@ class MNISTDataSet(_DataSet):
         x_test = np.pad(x_test, pad_width=((0, 0), (0, 0), (2, 2), (2, 2)))  # (60000, 1, 32, 32)
 
         x_train = shuffle(x_train)
-        x_test = shuffle(x_test,
-                         random_state=101)  # Fix this seed to not overlap val and test between train and inference runs
+        x_test = shuffle(x_test, random_state=101)  # Fix this seed to not overlap val and test between train and inference runs
 
         x_val = x_test[:len(x_test) // 2]  # 5000
         x_test = x_test[len(x_test) // 2:]  # 5000
-
-        x_val, x_test = torch.tensor(x_val), torch.tensor(x_test)
-        x_val = torch.Tensor(x_val.size()).bernoulli_(x_val)  # fix binarization
-        x_test = torch.Tensor(x_test.size()).bernoulli_(x_test)
 
         return x_train, x_val, x_test

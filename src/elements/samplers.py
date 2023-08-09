@@ -47,8 +47,8 @@ class GaussianSampler(nn.Module):
 
         #TODO: var vagy std különbség? gyököt vonni vagy nem?
 
-        if temperature is not None:
-            std = std * temperature
+        #if temperature is not None:
+        #    std = std * temperature
         z = mean
         if self.output_distribution == 'normal':
             z = self.calculate_z_normal(mean, std)
@@ -59,14 +59,14 @@ class GaussianSampler(nn.Module):
     @staticmethod
     @torch.jit.script
     def calculate_z_normal(mean, std):
-        eps = torch.empty_like(mean, device=torch.device('cuda')).normal_(0., 1.)
+        eps = torch.empty_like(mean, device=torch.device('cpu')).normal_(0., 1.)
         z = eps * std + mean
         return z
 
     @staticmethod
     @torch.jit.script
     def calulate_z_uniform(mean, std):
-        eps = torch.empty_like(mean, device=torch.device('cuda')).uniform_(0.)
+        eps = torch.empty_like(mean, device=torch.device('cpu')).uniform_(0.)
         z = eps * std + mean
         return z
 
@@ -92,7 +92,7 @@ class MixtureOfLogisticsSampler(nn.Module):
 
         B, _, H, W = logits.size()  # B, M*(3*C+1), H, W,
         n = self.n_output_mixtures
-        t = self.output_temperature
+        t = self.temperature
 
         logit_probs = logits[:, :n, :, :]  # B, M, H, W
         l = logits[:, n:, :, :]  # B, M*C*3 ,H, W

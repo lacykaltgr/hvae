@@ -9,7 +9,7 @@ from src.elements.dataset import _DataSet
 
 class ImageNetDataSet(_DataSet):
     def __init__(self):
-        super(ImageNetDataSet).__init__()
+        super(ImageNetDataSet, self).__init__()
 
     def load(self):
         train_data = self.read_imagenet_images(data_params.train_data_path)

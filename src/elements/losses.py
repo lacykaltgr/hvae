@@ -12,13 +12,15 @@ def get_reconstruction_loss():
     params = get_hparams()
     if params.loss_params.reconstruction_loss == 'default':
         return DiscMixLogistic(
-            data_shape=(params.data_params.target_res, params.data_params.target_res, params.data_params.channels),
+            data_shape=params.data_params.shape,
             data_num_bits=params.data_params.num_bits,
             num_output_mixtures=params.model_params.num_output_mixtures,
             min_log_scale=params.loss_params.min_mol_logscale,
             distribution_base=params.model_params.distribution_base,
             gradient_smoothing_beta=params.model_params.gradient_smoothing_beta,
         )
+    elif params.loss_params.reconstruction_loss == 'mse':
+        return nn.MSELoss()
     else:
         raise ValueError(f'Unknown reconstruction loss: {params.loss_params.reconstruction_loss}')
 
@@ -29,11 +31,10 @@ def get_kl_loss():
         return KLDivergence(
             distribution_base=params.model_params.distribution_base,
             gradient_smoothing_beta=params.model_params.gradient_smoothing_beta,
-            data_shape=(params.data_params.target_res, params.data_params.target_res, params.data_params.channels)
+            data_shape=params.data_params.shape,
         )
     else:
         raise ValueError(f'Unknown kl loss: {params.loss_params.kldiv_loss}')
-
 
 
 class DiscMixLogistic(nn.Module):
@@ -48,7 +49,7 @@ class DiscMixLogistic(nn.Module):
         super(DiscMixLogistic, self).__init__()
         self.data_shape = data_shape
         self.num_output_mixtures = num_output_mixtures
-        self.min_log_scale = min_log_scale
+        self.min_mol_logscale = min_log_scale
         self.distribution_base = distribution_base
         self.gradient_smoothing_beta = gradient_smoothing_beta
 
@@ -57,7 +58,7 @@ class DiscMixLogistic(nn.Module):
         self.min_pix_value = scale_pixels(0., data_num_bits)
         self.max_pix_value = scale_pixels(255., data_num_bits)
 
-    def forward(self, targets, logits, global_batch_size):
+    def forward(self, targets, logits, global_batch_size=32):
         # Shapes:
         #    targets: B, C, H, W
         #    logits: B, M * (3 * C + 1), H, W
@@ -66,6 +67,10 @@ class DiscMixLogistic(nn.Module):
 
         assert len(targets.shape) == 4
         B, C, H, W = targets.size()
+        if C == 1:
+            targets = targets.repeat(1, 3, 1, 1)
+            logits = logits.repeat(1, 3 * 2, 1, 1)
+            C = 3
         assert C == 3  # only support RGB for now
         n = self.num_output_mixtures
         targets = targets.unsqueeze(2)  # B, C, 1, H, W
@@ -131,20 +136,19 @@ class DiscMixLogistic(nn.Module):
 
         return loss, avg_loss, means, log_scales
 
-
     def _compute_inv_stdv(self, logits):
-        softplus = nn.Softplus(beta=self.output_gradient_smoothing_beta)
-        if self.output_distribution_base == 'std':
+        softplus = nn.Softplus(beta=self.gradient_smoothing_beta)
+        if self.distribution_base == 'std':
             scales = torch.maximum(softplus(logits),
                                    torch.as_tensor(np.exp(self.min_mol_logscale)))
             inv_stdv = 1. / scales  # Not stable for sharp distributions
             log_scales = torch.log(scales)
 
-        elif self.output_distribution_base == 'logstd':
+        elif self.distribution_base == 'logstd':
             log_scales = torch.maximum(logits, torch.as_tensor(np.array(self.min_mol_logscale)))
-            inv_stdv = torch.exp(-self.output_gradient_smoothing_beta * log_scales)
+            inv_stdv = torch.exp(-self.gradient_smoothing_beta * log_scales)
         else:
-            raise ValueError(f'distribution base {self.output_distribution_base} not known!!')
+            raise ValueError(f'distribution base {self.distribution_base} not known!!')
 
         return inv_stdv, log_scales
 
@@ -177,15 +181,15 @@ class KLDivergence(nn.Module):
         self.gradient_smoothing_beta = gradient_smoothing_beta
         self.data_shape = data_shape
 
-
-    def forward(self, p_mu, q_mu, p_sigma, q_sigma, global_batch_size):
-        if self.model.distribution_base == 'std':
+    def forward(self, p_mu, q_mu, p_sigma, q_sigma, global_batch_size=32):
+        if self.distribution_base == 'std':
             loss = self.calculate_std_loss(p_mu, q_mu, p_sigma, q_sigma)
         elif self.distribution_base == 'logstd':
             loss = self.calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma, self.gradient_smoothing_beta)
         else:
             raise ValueError(f'distribution base {self.distribution_base} not known!!')
 
+        print(loss)
         mean_axis = list(range(1, len(loss.size())))
         per_example_loss = torch.sum(loss, dim=mean_axis)
         n_mean_elems = np.prod([loss.size()[a] for a in mean_axis])  # heads * h * w  or h * w * z_dim
@@ -194,7 +198,6 @@ class KLDivergence(nn.Module):
         assert len(per_example_loss.shape) == 1
 
         scalar = global_batch_size * np.prod(self.data_shape)
-
         loss = torch.sum(per_example_loss) / scalar
         # divide by ln(2) to convert to KL rate (average space bits/dim)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
@@ -250,7 +253,7 @@ class SSIM(nn.Module):
         g = torch.reshape(g, shape=(1, -1))  # For tf.nn.softmax().
         g = F.softmax(g, dim=-1)
         g = torch.reshape(g, shape=(1, 1, filter_size, filter_size))
-        return torch.tile(g, (image_channels, 1, 1, 1))#.cuda()  # out_c, in_c // groups, h, w
+        return torch.tile(g, (image_channels, 1, 1, 1))  # .cuda()  # out_c, in_c // groups, h, w
 
     def _apply_filter(self, x):
         shape = list(x.size())

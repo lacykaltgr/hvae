@@ -8,7 +8,7 @@ from src.elements.dataset import _DataSet, DataSetState
 
 class GenericDataSet(_DataSet):
     def __init__(self):
-        super(GenericDataSet).__init__()
+        super(GenericDataSet, self).__init__()
         self.train_files = self.create_filenames_list(data_params.train_data_path)
         self.val_files = self.create_filenames_list(data_params.val_data_path)
         self.test_files = self.create_filenames_list(data_params.test_data_path)

@@ -17,7 +17,7 @@ from src.elements.samplers import get_output_sampler
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
 
 from src.utils import tensorboard_log, get_variate_masks, write_image_to_disk, linear_temperature, \
-    prepare_for_log
+    prepare_for_log, print_line
 
 prms = get_hparams()
 device = prms.model_params.device
@@ -30,17 +30,15 @@ kl_divergence = get_kl_loss()
 def compute_loss(targets: tensor, predictions: tensor, distributions: list, step_n: int) -> dict:
     # Use custom loss funtion if provided
     if prms.loss_params.custom_loss is not None:
-        return prms.loss_params.custom_loss(targets=targets, predictions=predictions, distributions=distributions,
-                                         step_n=step_n)
+        return prms.loss_params.custom_loss(targets=targets, predictions=predictions,
+                                            distributions=distributions, step_n=step_n)
 
     feature_matching_loss, avg_feature_matching_loss, means, log_scales \
-        = reconstruction_loss(targets=targets, predictions=predictions)
+        = reconstruction_loss(targets, predictions)
 
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
-    for p, q in distributions:
-        q_mu, q_sigma = q
-        p_mu, p_sigma = p
+    for p_mu, p_sigma, q_mu, q_sigma in distributions:
         loss, avg_loss = kl_divergence(q_mu=q_mu, q_sigma=q_sigma, p_mu=p_mu, p_sigma=p_sigma)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
@@ -58,11 +56,11 @@ def compute_loss(targets: tensor, predictions: tensor, distributions: list, step
     return dict(
         elbo=total_generator_loss,
         reconstruction_loss=feature_matching_loss,
-        avg_rec_loss=avg_feature_matching_loss,
+        avg_reconstruction_loss=avg_feature_matching_loss,
+        kl_div=kl_div,
         avg_var_prior_losses=avg_global_var_prior_losses,
         means=means,
         log_scales=log_scales,
-        kl_div=kl_div
     )
 
 
@@ -106,7 +104,7 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
         if step_n is None:
             step_n = max(prms.loss_params.vae_beta_anneal_steps, prms.loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, predictions, distributions, step_n=step_n)
-        outputs = net.sample(predictions)
+        outputs = sample(predictions)
         return outputs, computed, results
 
 
@@ -130,11 +128,10 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
         outputs, _, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
         targets = inputs
 
-        reconstruction_loss = loss['reconstruction_loss']
-        kl_div = loss['kl_div']
-        nelbo = reconstruction_loss + kl_div
         ssim_per_batch = ssim_metric(targets, outputs, global_batch_size=prms.synthesis_params.batch_size)
         ssims += ssim_per_batch
+        nelbo = loss['elbo']
+        kl_div = loss['kl_div']
         nelbos += nelbo
 
         # Save images to disk
@@ -163,7 +160,7 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
 
 def generation_step(net, temperatures: list):
     outputs, computed = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
-    samples = net.sample(outputs)
+    samples = sample(outputs)
     return samples
 
 
@@ -196,9 +193,9 @@ def generate(net, logger: logging.Logger):
     return all_outputs
 
 
-def train_step(net, optimizer, inputs, step_n):
+def train_step(net, optimizer, schedule, inputs, step_n):
     predictions, _, distibutions = net(inputs)
-    outputs = net.sample(predictions)
+    outputs = sample(predictions)
     results = compute_loss(inputs, predictions, distibutions, step_n=step_n)
 
     results["elbo"].backward()
@@ -208,6 +205,7 @@ def train_step(net, optimizer, inputs, step_n):
 
     if not skip:
         optimizer.step()
+        schedule.step()
 
     optimizer.zero_grad()
     return outputs, results, global_norm, gradient_skip_counter_delta
@@ -232,21 +230,20 @@ def train(net,
 
             start_time = time.time()
             train_outputs, train_results, global_norm, gradient_skip_counter_delta = \
-                train_step(net, optimizer, train_inputs, global_step)
+                train_step(net, optimizer, schedule, train_inputs, global_step)
             end_time = round((time.time() - start_time), 2)
-            schedule.step()
 
             gradient_skip_counter += gradient_skip_counter_delta
 
             train_results = prepare_for_log(train_results)
             logger.info((global_step,
                          ('Time/Step (sec)', end_time),
-                         ('Reconstruction Loss', round(train_results["distortion"], 3)),
-                         ('KL loss', round(train_results["rate"], 3)),
-                         ('nelbo', round(train_results["elbo"], 4)),
-                         ('average KL loss', round(train_results["train_var_loss"], 3)),
+                         ('Reconstruction Loss', round(train_results["reconstruction_loss"], 3)),
+                         ('KL loss', round(train_results["kl_div"], 3)),
+                         ('ELBO', round(train_results["elbo"], 4)),
+                         ('average KL loss', round(train_results["var_loss"], 3)),
                          ('Beta', round(kldiv_schedule(global_step).detach().cpu().item(), 4)),
-                         ('N° active groups', train_results["active_groups"]),
+                         ('N° active groups', train_results["n_active_groups"]),
                          ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
                          ('GradSkipCount', gradient_skip_counter),))
 
@@ -254,11 +251,17 @@ def train(net,
             EVALUATION AND CHECKPOINTING
             """
             net.eval()
-            if global_step % prms.train_params.eval_interval_in_steps == 0 or global_step == 0:
+            first_step = global_step == 0
+            eval_time = global_step % prms.log_params.eval_interval_in_steps == 0
+            checkpoint_time = global_step % prms.log_params.checkpoint_interval_in_steps == 0
+            if eval_time or checkpoint_time:
+                print_line(logger, newline_after=False)
+
+            if eval_time or first_step:
                 train_ssim = ssim_metric(train_inputs, train_outputs, global_batch_size=prms.train_params.batch_size)
                 logger.info(
                     f'Train Stats for global_step {global_step} | NELBO {train_results["elbo"]} | 'f'SSIM: {train_ssim}')
-                val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step)
+                val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger)
                 # Tensorboard logging
                 logger.info('Logging to Tensorboard..')
                 tensorboard_log(net, optimizer, global_step,
@@ -270,12 +273,14 @@ def train(net,
                                 means=val_results["means"], log_scales=val_results["log_scales"],
                                 mode='val')
 
-            if global_step % prms.train_params.checkpoint_interval_in_steps == 0 or global_step == 0:
+            if checkpoint_time or first_step:
                 # Save checkpoint (only if better than best)
-                logger.info(f'Saving checkpoint for global_step {global_step}..')
+                experiment = Experiment(global_step, net, optimizer, schedule, prms)
+                path = experiment.save(checkpoint_path)
+                logger.info(f'Saved checkpoint for global_step {global_step} to {path}')
 
-                experiment = Experiment(global_step, net, prms)
-                experiment.save(checkpoint_path)
+            if eval_time or checkpoint_time:
+                print_line(logger, newline_after=True)
             net.train()
 
             if global_step >= prms.train_params.total_train_steps:
@@ -304,7 +309,8 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
 
 
 def sample(logits):
-    return get_output_sampler()(logits)
+    m, s = torch.chunk(logits, chunks=2, dim=1)
+    return get_output_sampler()(m, s)
 
 
 ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channels)
@@ -313,22 +319,13 @@ ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channe
 def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
     net.eval()
 
-    """
-    elbo=total_generator_loss,
-    reconstruction_loss=feature_matching_loss,
-    avg_rec_loss=avg_feature_matching_loss,
-    avg_var_prior_losses=avg_global_var_prior_losses,
-    means=means,
-    log_scales=log_scales,
-    kl_div=kl_div
-    """
-
     val_inputs, val_outputs, val_results = None, None, None
     val_step = 0
     val_feature_matching_losses = 0
     val_global_varprior_losses = None
     val_ssim = 0
     val_kl_divs = 0
+
     for val_step, val_inputs in enumerate(val_loader):
         val_inputs = val_inputs.to(device, non_blocking=True)
         val_outputs, val_computed, val_results = \
@@ -342,28 +339,20 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
             if val_global_varprior_losses is None \
             else [u + v for u, v in zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
 
-    global_results = val_results
-    global_results["feature_matching_loss"] \
-        = val_feature_matching_losses / (val_step + 1)
-    global_results["ssim"] \
-        = val_ssim / (val_step + 1)
-    global_results["kl_div"] \
-        = val_kl_divs / (val_step + 1)
-
-    global_results["avg_var_prior_losses"] \
-        = val_global_varprior_losses
-    global_results["global_varprior_losses"] \
-        = [v / (val_step + 1) for v in val_global_varprior_losses]
-    global_results["varprior_loss"] \
-        = np.sum([v.detach().cpu() for v in val_global_varprior_losses])
-    global_results["elbo"] = global_results["kl_div"] + global_results["feature_matching_loss"]
-
-    global_results = prepare_for_log(global_results)
-    val_results.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
+    global_results = dict(
+        reconstruction_loss=val_feature_matching_losses / (val_step + 1),
+        kl_div=val_kl_divs / (val_step + 1),
+        ssim=val_ssim / (val_step + 1),
+        avg_var_prior_losses=val_global_varprior_losses,
+        global_varprior_losses=[v / (val_step + 1) for v in val_global_varprior_losses],
+        varprior_loss=np.sum([v.detach().cpu() for v in val_global_varprior_losses]),
+    )
+    global_results["elbo"] = global_results["kl_div"] + global_results["reconstruction_loss"]
+    global_results.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
 
     logger.info(
-        f' Validation Stats|' if global_step is None else
-        f' Validation Stats for global_step {global_step} |'
+        f'Validation Stats|' if global_step is None else
+        f'Validation Stats for global_step {global_step} |'
         f' Reconstruction Loss {global_results["reconstruction_loss"]:.4f} |'
         f' KL Div {global_results["kl_div"]:.4f} |'f'NELBO {global_results["elbo"]:.6f} |'
         f' SSIM: {global_results["ssim"]:.6f}')

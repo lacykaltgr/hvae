@@ -4,7 +4,7 @@ def _model():
 
     _blocks = dict(
         x=InputBlock(
-            net=None,
+            net=torch.nn.Flatten(),
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
@@ -12,6 +12,7 @@ def _model():
         ),
         y=TopBlock(
             net=hiddens_to_y_net,
+            prior_shape=(1, 1000),
             prior_trainable=True,
             condition="hiddens"
         ),
@@ -23,7 +24,7 @@ def _model():
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=z_to_x_net,
+            net=[z_to_x_net, torch.nn.Unflatten(1, (2, 32, 32))],
             input_id="z"
         ),
     )
@@ -43,15 +44,41 @@ from hparams import Hyperparams
 
 """
 --------------------
+LOGGING HYPERPARAMETERS
+--------------------
+"""
+log_params = Hyperparams(
+    dir='experiments/',
+    name='TDVAE',
+
+    # TRAIN LOG
+    # --------------------
+    load_from_train=None,
+    dir_naming_scheme='timestamp',
+
+    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
+    checkpoint_interval_in_steps=5,
+    eval_interval_in_steps=5,
+
+    # EVAL LOG
+    # --------------------
+    load_from_eval=None,
+
+
+    # SYNTHESIS LOG
+    # --------------------
+    load_from_synthesis=None,
+)
+
+"""
+--------------------
 MODEL HYPERPARAMETERS
 --------------------
 """
 
 model_params = Hyperparams(
     model=_model,
-    device='cuda',
-    dir='experiments/',
-    name='TDVAE',
+    device='cpu',
     seed=420,
 
     # Whether to initialize the prior latent layer as zeros (no effect)
@@ -62,9 +89,9 @@ model_params = Hyperparams(
     # std (with softplus) or logstd (std is computed with exp(logstd)).
     distribution_base='std',
     # Similarly for output layer
-    output_distribution='mol',
+    output_distribution='normal',
     output_distribution_base='std',
-    num_output_mixtures=10,
+    num_output_mixtures=3,
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
@@ -78,11 +105,11 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-import data.cifar10 as cifar10
+import data.mnist as mnist
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=cifar10.CIFARDataset(),
+    dataset=mnist.MNISTDataSet(),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -91,11 +118,13 @@ data_params = Hyperparams(
 
     # Image metadata
     # Image resolution of the dataset (High and Width, assumed square)
-    target_res=784,
+    target_res=1024,
     # Image channels of the dataset (Number of color channels)
     channels=1,
     # Image color depth in the dataset (bit-depth of each color channel)
-    num_bits=8.
+    num_bits=8.,
+
+    shape=(32, 32, 1),
 )
 
 """
@@ -104,95 +133,10 @@ TRAINING HYPERPARAMETERS
 --------------------
 """
 train_params = Hyperparams(
-    load_from=None,
-
     # The total number of training updates
     total_train_steps=800000,
     # training batch size
     batch_size=32,
-
-    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
-    checkpoint_interval_in_steps=10000,
-    tensorboard_log_interval_in_steps=1000,
-    eval_interval_in_steps=10000,
-)
-
-"""
---------------------
-EVALUATION HYPERPARAMETERS
---------------------
-"""
-eval_params = Hyperparams(
-    load_from=None,
-
-    # Defines how many validation samples to validate on every time we're going to write to tensorboard
-    # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    #TODO: implement
-    n_samples_for_validation=5000,
-    # validation batch size
-    batch_size=32 * 2,
-
-    # Threshold used to mark latent groups as "active".
-    # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
-)
-
-"""
---------------------
-SYNTHESIS HYPERPARAMETERS
---------------------
-"""
-synthesis_params = Hyperparams(
-    load_timestamp='2020-12-08_17-00-00',
-
-    # The synthesis mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
-    synthesis_mode='reconstruction',
-
-    # Reconstruction/Encoding mode
-    # --------------------
-    # Defines the quantile at which to prune the latent space (section 7). Example:
-    # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-    # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-    # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-    # suitable value of variate_masks_quantile before running encoding mode.
-    variate_masks_quantile=0.03,
-
-    # Reconstruction mode
-    # --------------------
-    # Whether to save the targets during reconstruction (for debugging)
-    save_target_in_reconstruction=False,
-    # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
-    # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
-    # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
-    # hurt NLL.
-    mask_reconstruction=False,
-
-    # Div_stats mode
-    # --------------------
-    # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-    # reconstruction and encoding). Set to 1. to use the full training dataset.
-    # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-    div_stats_subset_ratio=0.2,
-
-    # Generation_mode
-    # --------------------
-    # Number of generated batches per temperature from the temperature_settings list.
-    n_generation_batches=1,
-    # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
-    # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
-    # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
-    # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
-    # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
-    # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
-    # respective top-down blocks.
-    temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
-                          ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
-    # Temperature of the output layer (usually kept at 1. for extra realism)
-    output_temperature=1.,
-
-    # inference batch size (all modes)
-    # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
-    batch_size=32
 )
 
 """
@@ -288,6 +232,80 @@ loss_params = Hyperparams(
 
 """
 --------------------
+EVALUATION HYPERPARAMETERS
+--------------------
+"""
+eval_params = Hyperparams(
+    # Defines how many validation samples to validate on every time we're going to write to tensorboard
+    # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
+    #TODO: implement
+    n_samples_for_validation=5000,
+    # validation batch size
+    batch_size=32 * 2,
+
+    # Threshold used to mark latent groups as "active".
+    # Purely for debugging, shouldn't be taken seriously.
+    latent_active_threshold=1e-4
+)
+
+"""
+--------------------
+SYNTHESIS HYPERPARAMETERS
+--------------------
+"""
+synthesis_params = Hyperparams(
+    # The synthesis mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
+    synthesis_mode='reconstruction',
+
+    # inference batch size (all modes)
+    # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
+    batch_size=32,
+
+    # Reconstruction/Encoding mode
+    # --------------------
+    # Defines the quantile at which to prune the latent space (section 7). Example:
+    # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
+    # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
+    # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
+    # suitable value of variate_masks_quantile before running encoding mode.
+    variate_masks_quantile=0.03,
+
+    # Reconstruction mode
+    # --------------------
+    # Whether to save the targets during reconstruction (for debugging)
+    save_target_in_reconstruction=False,
+    # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
+    # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
+    # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
+    # hurt NLL.
+    mask_reconstruction=False,
+
+    # Div_stats mode
+    # --------------------
+    # Defines the ratio of the training data to compute the average KL per variate on (used for masked
+    # reconstruction and encoding). Set to 1. to use the full training dataset.
+    # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
+    div_stats_subset_ratio=0.2,
+
+    # Generation_mode
+    # --------------------
+    # Number of generated batches per temperature from the temperature_settings list.
+    n_generation_batches=1,
+    # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
+    # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
+    # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
+    # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
+    # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
+    # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
+    # respective top-down blocks.
+    temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
+                          ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
+    # Temperature of the output layer (usually kept at 1. for extra realism)
+    output_temperature=1.,
+)
+
+"""
+--------------------
 BLOCK HYPERPARAMETERS
 --------------------
 """
@@ -342,7 +360,7 @@ CUSTOM BLOCK HYPERPARAMETERS
 # add your custom block hyperparameters here
 x_to_hiddens_net = Hyperparams(
     type='mlp',
-    input_size=784,
+    input_size=1024,
     hidden_sizes=[2000],
     output_size=1000,
     activation=torch.nn.ReLU(),
@@ -350,55 +368,37 @@ x_to_hiddens_net = Hyperparams(
 )
 
 hiddens_to_y_net = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
+    type='mlp',
+    input_size=2000,
+    hidden_sizes=[2000],
+    output_size=1000,
+    activation=torch.nn.SiLU(),
+    residual=False
 )
 
 z_prior_net = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
+    type='mlp',
+    input_size=500,
+    hidden_sizes=[500],
+    output_size=1000,
+    activation=torch.nn.ReLU(),
+    residual=False
 )
 
 z_posterior_net = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
+    type='mlp',
+    input_size=1500,
+    hidden_sizes=[2000],
+    output_size=1000,
+    activation=torch.nn.ReLU(),
+    residual=False
 )
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=784,
-    hidden_sizes=[2000],
-    output_size=1000,
+    input_size=500,
+    hidden_sizes=[1000],
+    output_size=2048,
     activation=torch.nn.ReLU(),
     residual=False
 )

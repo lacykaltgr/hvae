@@ -1,18 +1,15 @@
 import torch
 from torch import nn
 from torch import tensor
-from typing import List, Iterator
-
-from torch.nn import Parameter
 
 from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 #from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate
 
 
 class Encoder(nn.Module):
-    def __init__(self, encoder_blocks: list, device: str = "cuda"):
+    def __init__(self, encoder_blocks: nn.ModuleList, device: str = "cuda"):
         super(Encoder, self).__init__()
-        self.encoder_blocks: List[nn.Module] = encoder_blocks
+        self.encoder_blocks: nn.ModuleList = encoder_blocks
         self.device = device
 
     def forward(self, x: tensor) -> (tensor, dict):
@@ -22,14 +19,11 @@ class Encoder(nn.Module):
             output, computed = block(computed)
         return output, computed
 
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
-        return Parameter(torch.tensor(list(map(lambda x: x.parameters(), self.encoder_blocks))))
-
 
 class Decoder(nn.Module):
-    def __init__(self, decoder_blocks: list, device: str = "cuda"):
+    def __init__(self, decoder_blocks: nn.ModuleList, device: str = "cuda"):
         super(Decoder, self).__init__()
-        self._decoder_blocks: List[nn.Module] = decoder_blocks
+        self._decoder_blocks: nn.ModuleList = decoder_blocks
         self._device = device
 
     def forward(self, computed: dict, variate_masks: list = None) -> (tensor, dict, list):
@@ -41,9 +35,11 @@ class Decoder(nn.Module):
         assert len(variate_masks) == len(self._decoder_blocks)
 
         for block, variate_mask in zip(self._decoder_blocks, variate_masks):
-            args = [computed] if isinstance(block, DecBlock) else [computed, variate_mask]
-            output, computed, dists = block(*args)
-            distributions.append(dists)
+            args = dict(computed=computed, variate_mask=variate_mask) \
+                if isinstance(block, DecBlock) else dict(computed=computed)
+            output, computed, dists = block(**args)
+            if dists is not None:
+                distributions.append(dists)
         return output, computed, distributions
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
@@ -57,8 +53,8 @@ class hVAE(nn.Module):
     def __init__(self, blocks: dict, device: str = "cuda"):
         super(hVAE, self).__init__()
 
-        self.encoder = list()
-        self.decoder = list()
+        self.encoder = nn.ModuleList()
+        self.decoder = nn.ModuleList()
 
         for block in blocks:
             blocks[block].set_output(block)
@@ -69,8 +65,8 @@ class hVAE(nn.Module):
             else:
                 raise ValueError(f"Unknown block type {type(blocks[block])}")
 
-        self.encoder = Encoder(self.encoder, device)
-        self.decoder = Decoder(self.decoder, device)
+        self.encoder: nn.Module = Encoder(self.encoder, device)
+        self.decoder: nn.Module = Decoder(self.decoder, device)
         self.device = device
 
     def compute(self, block_name) -> (tensor, dict):
@@ -113,9 +109,6 @@ class hVAE(nn.Module):
         _, computed = self.encoder(x)
         output, computed, distributions = self.decoder(computed, variate_masks)
         return output, computed, distributions
-
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
-        return Parameter(tensor([self.encoder.parameters(), self.decoder.parameters()]))
 
     #TODO
     def visualize_graph(self) -> None:

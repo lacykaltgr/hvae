@@ -35,7 +35,7 @@ def main():
                             checkpoint=checkpoint)
 
     with torch.no_grad():
-        _ = model(torch.ones((1, p.data_params.channels, p.data_params.target_res, p.data_params.target_res)))
+        _ = model(torch.ones((1, *p.data_params.shape)))
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     logger.info('Train step generator trainable params {:.3f}m.'.format(
         np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))

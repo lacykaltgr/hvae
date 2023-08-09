@@ -5,6 +5,7 @@ def get_hparams():
     import models.TDVAE as params
 
     return Hyperparams(
+        log_params=params.log_params,
         model_params=params.model_params,
         data_params=params.data_params,
         train_params=params.train_params,
@@ -34,6 +35,12 @@ class Hyperparams:
             super().__setattr__(name, value)
         else:
             self.config[name] = value
+
+    def __getstate__(self):
+        return self.config
+
+    def __setstate__(self, state):
+        self.config = state
 
     def keys(self):
         return self.config.keys()
