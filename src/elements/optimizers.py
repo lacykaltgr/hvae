@@ -30,7 +30,7 @@ def get_optimizer(model, type, learning_rate,
     else:
         raise ValueError(f'Optimizer {type} not known!!')
 
-    if checkpoint['optimizer_state_dict'] is not None:
+    if checkpoint is not None:
         opt = opt(params=model.parameters(), **opt_kwargs)
         opt.load_state_dict(checkpoint['optimizer_state_dict'])
         print('Loaded Optimizer Checkpoint')

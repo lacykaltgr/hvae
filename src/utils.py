@@ -106,14 +106,17 @@ def load_experiment_for(mode: str = 'test'):
 
     # not load experiment
     if experiment_directory is None:
-        return None
+        experiment_directory = ''
 
     # load latest experiment
-    if experiment_directory == '' or experiment_directory == 'latest':
+    if experiment_directory == 'latest':
         experiment_directory = sorted(os.listdir(get_experiment_dir()))[-1]
 
     path = os.path.join(get_experiment_dir(), experiment_directory)
     os.makedirs(path, exist_ok=True)
+
+    if experiment_directory is None:
+        return None, path
 
     file_path = os.path.join(path, 'experiment.pt')
     experiment = torch.load(file_path) if os.path.exists(file_path) else None

@@ -1,9 +1,10 @@
-from typing import List
+from typing import List, Iterator
 
 import numpy as np
 import torch
 from torch import nn
 from torch import tensor
+from torch.nn import Parameter
 
 from src.elements.nets import get_net
 from src.elements.samplers import GaussianSampler
@@ -17,6 +18,7 @@ class _Block(nn.Module):
 
     def set_output(self, output: str) -> None:
         self.output = output
+
 
 
 class ConcatBlock(_Block):
@@ -39,21 +41,28 @@ class ConcatBlock(_Block):
 class InputBlock(_Block):
     def __init__(self, net):
         super(InputBlock, self).__init__()
-        self.net = net
+        self.net: nn.Sequential = get_net(net)
+        self.dtype ='InputBlock'
 
     def forward(self, inputs: tensor) -> (tensor, dict):
-        computed = {self.input: inputs}
         if self.net is None:
+            computed = {self.output: inputs}
             return inputs, computed
-        output = self.net(inputs)
-        computed[self.output] = output
-        return output, computed
+        else:
+            output = self.net(inputs)
+            computed = {
+                "input": inputs,
+                self.output: output
+            }
+            return output, computed
 
+    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+        return self.net.parameters()
 
 class OutputBlock(_Block):
     def __init__(self, net, input_id: str):
         super(OutputBlock, self).__init__(input_id)
-        self.net = net
+        self.net: nn.Sequential = get_net(net)
 
     def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
@@ -67,7 +76,7 @@ class OutputBlock(_Block):
 class EncBlock(_Block):
     def __init__(self, net, input_id: str):
         super(EncBlock, self).__init__(input_id)
-        self.net = net
+        self.net: nn.Sequential = get_net(net)
 
     def forward(self, computed: dict) -> (tensor, dict):
         if self.input not in computed:
@@ -86,7 +95,7 @@ class SimpleDecBlock(_Block):
                  input: str,
                  output_distribution: str = 'normal'):
         super(SimpleDecBlock, self).__init__(input)
-        self.prior_net = get_net(net)
+        self.prior_net: nn.Sequential = get_net(net)
         self.output_distribution = output_distribution
 
     def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
@@ -120,8 +129,8 @@ class DecBlock(SimpleDecBlock):
                  input_id: str, condition: str,
                  output_distribution: str = 'normal'):
         super(DecBlock, self).__init__(prior_net, input_id, output_distribution)
-        self.prior_net = get_net(prior_net)
-        self.posterior_net = get_net(posterior_net)
+        self.prior_net: nn.Sequential = get_net(prior_net)
+        self.posterior_net : nn.Sequential = get_net(posterior_net)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
@@ -214,10 +223,8 @@ class ResidualDecBlock(DecBlock):
                  input, condition,
                  output_distribution: str = 'normal'):
         super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
-        self.net = get_net(net)
-        self.prior_net = get_net(prior_net)
-        self.posterior_net = get_net(posterior_net)
-        self.z_projection = get_net(z_projection)
+        self.net: nn.Sequential = get_net(net)
+        self.z_projection: nn.Sequential = get_net(z_projection)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)

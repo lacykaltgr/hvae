@@ -91,9 +91,9 @@ data_params = Hyperparams(
 
     # Image metadata
     # Image resolution of the dataset (High and Width, assumed square)
-    target_res=32,
+    target_res=784,
     # Image channels of the dataset (Number of color channels)
-    channels=3,
+    channels=1,
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.
 )
@@ -104,7 +104,7 @@ TRAINING HYPERPARAMETERS
 --------------------
 """
 train_params = Hyperparams(
-    load_checkpoint='2020-12-08_17-00-00',
+    load_from=None,
 
     # The total number of training updates
     total_train_steps=800000,
@@ -123,7 +123,7 @@ EVALUATION HYPERPARAMETERS
 --------------------
 """
 eval_params = Hyperparams(
-    load_timestamp='2020-12-08_17-00-00',
+    load_from=None,
 
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution

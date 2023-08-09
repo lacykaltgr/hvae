@@ -2,11 +2,11 @@ from src.elements.layers import *
 from hparams import get_hparams, Hyperparams
 
 
-def get_net(model):
+def get_net(model) -> nn.Sequential:
     params = get_hparams()
 
     if model is None:
-        return lambda x: x
+        return nn.Sequential()
 
     elif isinstance(model, str):
         # Load model from default
