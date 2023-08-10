@@ -30,12 +30,10 @@ def get_optimizer(model, type, learning_rate,
     else:
         raise ValueError(f'Optimizer {type} not known!!')
 
+    opt = opt(params=model.parameters(), **opt_kwargs)
     if checkpoint is not None:
-        opt = opt(params=model.parameters(), **opt_kwargs)
-        opt.load_state_dict(checkpoint['optimizer_state_dict'])
+        opt.load_state_dict(checkpoint.optimizer_state_dict)
         print('Loaded Optimizer Checkpoint')
-    else:
-        opt = opt(params=model.parameters(), **opt_kwargs)
 
     return opt
 
@@ -122,8 +120,8 @@ class Adamax(optim.Optimizer):
         for i in params:
             params[i]['data'] = torch.stack(params[i]['data'], dim=0)
             grads[i] = torch.stack(grads[i], dim=0)
-            exp_avg[i] = torch.stack(exp_avg[i], dim=0).cuda()
-            exp_inf[i] = torch.stack(exp_inf[i], dim=0).cuda()
+            exp_avg[i] = torch.stack(exp_avg[i], dim=0)#.cuda()
+            exp_inf[i] = torch.stack(exp_inf[i], dim=0)#.cuda()
 
         for group in self.param_groups:
             beta1, beta2 = group['betas']

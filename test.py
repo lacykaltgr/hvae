@@ -11,20 +11,19 @@ def main():
     checkpoint, checkpoint_path = load_experiment_for('test')
     logger = setup_logger(checkpoint_path)
 
-    model = p.model_params.model()
+    assert checkpoint is not None
+    model = checkpoint.get_model()
+    logger.info('Model Checkpoint is loaded')
+
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
-
-    assert checkpoint.model is not None
-    model.load_state_dict(checkpoint['model_state_dict'])
-    logger.info('Model Checkpoint is loaded')
 
     model = model.to(model.device)
 
     dataset = p.data_params.dataset
     val_loader = dataset.get_val_loader()
 
-    evaluate(model, val_loader)
+    evaluate(model, val_loader, global_step=None, logger=logger)
 
 
 if __name__ == '__main__':

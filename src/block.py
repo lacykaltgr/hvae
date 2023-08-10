@@ -54,9 +54,6 @@ class InputBlock(_Block):
             }
             return output, computed
 
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
-        return self.net.parameters()
-
 
 class OutputBlock(_Block):
     def __init__(self, net, input_id: str):
@@ -187,7 +184,6 @@ class TopBlock(DecBlock):
                  condition: str,
                  output_distribution: str = 'normal'):
         super(TopBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
-        #TODO: itt fent hparamsból kell valami
         if prior_trainable:
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
                 data=torch.empty(size=prior_shape), requires_grad=True)

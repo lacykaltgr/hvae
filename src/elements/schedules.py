@@ -58,7 +58,7 @@ def get_schedule(optimizer, decay_scheme, warmup_steps, decay_steps, decay_rate,
         raise NotImplementedError(f'{decay_scheme} is not implemented yet!')
 
     if checkpoint is not None:
-        schedule.load_state_dict(checkpoint['scheduler_state_dict'])
+        schedule.load_state_dict(checkpoint.scheduler_state_dict)
         print('Loaded Scheduler Checkpoint')
 
     return schedule

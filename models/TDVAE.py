@@ -4,7 +4,7 @@ def _model():
 
     _blocks = dict(
         x=InputBlock(
-            net=torch.nn.Flatten(),
+            net=torch.nn.Flatten(start_dim=1),
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
@@ -62,12 +62,12 @@ log_params = Hyperparams(
 
     # EVAL LOG
     # --------------------
-    load_from_eval=None,
+    load_from_eval='2023-08-10_22-13-14/checkpoints/checkpoint-25.pth',
 
 
     # SYNTHESIS LOG
     # --------------------
-    load_from_synthesis=None,
+    load_from_synthesis='2023-08-10_22-13-14/checkpoints/checkpoint-25.pth',
 )
 
 """

@@ -7,6 +7,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from hparams import get_hparams
+from experiment import Experiment
 """
 -------------------
 MODEL UTILS
@@ -70,7 +71,9 @@ def get_load_from_dir(mode='train'):
     if load_from == 'latest':
         load_from = sorted(os.listdir(dir))[-1]
     load_from = "" if load_from is None else load_from
-    return f'{dir}/{load_from}'
+    load_from_file = f'{dir}/{load_from}'
+    print(f"Loading from {load_from_file}")
+    return load_from_file
 
 
 def get_save_to_dir():
@@ -132,9 +135,7 @@ def load_experiment_for(mode: str = 'test'):
     experiment = None
     # load experiment from checkpoint
     if os.path.isfile(load_from):
-        file_path = load_from
-        if os.path.isfile(file_path):
-            experiment = torch.load(file_path) if os.path.exists(file_path) else None
+        experiment = Experiment.load(load_from)
     return experiment, save_to
 
 

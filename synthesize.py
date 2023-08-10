@@ -11,7 +11,7 @@ from src.utils import write_image_to_disk, setup_logger, load_experiment_for
 
 def divergence_stats_mode(model, dataset, latents_folder):
     stats_filepath = os.path.join(latents_folder, 'div_stats.npy')
-    per_dim_divs = compute_per_dimension_divergence_stats(dataset, model)
+    per_dim_divs = compute_per_dimension_divergence_stats(model, dataset)
     np.save(stats_filepath, per_dim_divs.detach().cpu().numpy())
 
 
@@ -28,7 +28,7 @@ def generation_mode(model, artifacts_folder, logger: logging.Logger = None):
 
 
 def reconstruction_mode(model, test_dataset, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
-    io_pairs = reconstruct(test_dataset, model, artifacts_folder, latents_folder, logger)
+    io_pairs = reconstruct(model, test_dataset, artifacts_folder, latents_folder, logger)
     #return io_pairs
 
 
@@ -54,12 +54,12 @@ def main():
     checkpoint, checkpoint_path = load_experiment_for('synthesis')
     logger = setup_logger(checkpoint_path)
 
-    model = p.model_params.model()
-    with torch.no_grad():
-        _ = model(torch.ones((1, p.data_params.channels, p.data_params.target_res, p.data_params.target_res)).cuda())
-    assert checkpoint['model_state_dict'] is not None
-    model.load_state_dict(checkpoint['model_state_dict'])
+    assert checkpoint is not None
+    model = checkpoint.get_model()
     logger.info('Model Checkpoint is loaded')
+    with torch.no_grad():
+        _ = model(torch.ones((1, *p.data_params.shape)))
+
     model = model.to(model.device)
 
     data_loader = None if p.synthesis_params.synthesis_mode == "generation" \

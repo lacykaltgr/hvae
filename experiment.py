@@ -1,21 +1,23 @@
 import torch
 import os
 
+
 class Experiment:
     def __init__(self, global_step=-1, model=None, optimizer=None, scheduler=None, params=None):
         try:
             self.global_step: int = global_step
             self.model = model
-            self.model_params = params.model_params
-            self.data_params = params.data_params
-            self.train_params = params.train_params
-            self.optimizer_params = params.optimizer_params
-            self.loss_params = params.loss_params
-            self.eval_params = params.eval_params
-            self.synthesis_params = params.synthesis_params
+            if params is not None:
+                self.model_params = params.model_params
+                self.data_params = params.data_params
+                self.train_params = params.train_params
+                self.optimizer_params = params.optimizer_params
+                self.loss_params = params.loss_params
+                self.eval_params = params.eval_params
+                self.synthesis_params = params.synthesis_params
 
-            self.scheduler_state = scheduler.state_dict()
-            self.optimizer_state = optimizer.state_dict()
+            self.scheduler_state_dict = scheduler.state_dict() if scheduler is not None else None
+            self.optimizer_state_dict = optimizer.state_dict() if optimizer is not None else None
         except TypeError:
             print("Error loading experiment")
 
@@ -29,15 +31,16 @@ class Experiment:
 
     @staticmethod
     def load(path):
-        return torch.load(path)
+        experiment: Experiment = torch.load(path)
+        return experiment
 
-    @staticmethod
-    def load_model(path):
-        return torch.load(path)
+    def get_model(self):
+        return self.model
 
     def __getstate__(self):
         return {"global_step": self.global_step,
                 "model": self.model,
+
                 "model_params": self.model_params,
                 "data_params": self.data_params,
                 "train_params": self.train_params,
@@ -45,8 +48,8 @@ class Experiment:
                 "loss_params": self.loss_params,
                 "eval_params": self.eval_params,
                 "synthesis_params": self.synthesis_params,
-                "scheduler_state": self.scheduler_state,
-                "optimizer_state": self.optimizer_state}
+                "scheduler_state_dict": self.scheduler_state_dict,
+                "optimizer_state_dict": self.optimizer_state_dict}
 
     def __setstate__(self, state):
         self.global_step = state["global_step"]
@@ -58,7 +61,7 @@ class Experiment:
         self.loss_params = state["loss_params"]
         self.eval_params = state["eval_params"]
         self.synthesis_params = state["synthesis_params"]
-        self.scheduler_state = state["scheduler_state"]
-        self.optimizer_state = state["optimizer_state"]
+        self.scheduler_state = state["scheduler_state_dict"]
+        self.optimizer_state = state["optimizer_state_dict"]
 
 

@@ -125,7 +125,7 @@ class _DataSet(TorchDataset):
                                            drop_last=True)
 
     def get_test_loader(self):
-        eval_params = get_hparams().test_params
+        eval_params = get_hparams().eval_params
         return torch.utils.data.DataLoader(dataset=self.test_set,
                                            batch_size=eval_params.batch_size,
                                            shuffle=False,

@@ -189,7 +189,6 @@ class KLDivergence(nn.Module):
         else:
             raise ValueError(f'distribution base {self.distribution_base} not known!!')
 
-        print(loss)
         mean_axis = list(range(1, len(loss.size())))
         per_example_loss = torch.sum(loss, dim=mean_axis)
         n_mean_elems = np.prod([loss.size()[a] for a in mean_axis])  # heads * h * w  or h * w * z_dim
@@ -210,6 +209,7 @@ class KLDivergence(nn.Module):
         term1 = (p_mu - q_mu) / q_sigma
         term2 = p_sigma / q_sigma
         loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
+        loss = torch.nan_to_num(loss, nan=0.0)
         return loss
 
     @staticmethod

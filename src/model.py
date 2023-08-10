@@ -25,6 +25,7 @@ kldiv_schedule = get_beta_schedule()
 gamma_schedule = get_gamma_schedule()
 reconstruction_loss = get_reconstruction_loss()
 kl_divergence = get_kl_loss()
+ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channels)
 
 
 def compute_loss(targets: tensor, predictions: tensor, distributions: list, step_n: int) -> dict:
@@ -62,6 +63,11 @@ def compute_loss(targets: tensor, predictions: tensor, distributions: list, step
         means=means,
         log_scales=log_scales,
     )
+
+
+def sample(logits):
+    m, s = torch.chunk(logits, chunks=2, dim=1)
+    return get_output_sampler()(m, s)
 
 
 def global_norm(net):
@@ -109,7 +115,6 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
 
 
 def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
-    ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channels)
     if artifacts_folder is not None:
         artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/reconstructed')
         os.makedirs(artifacts_folder, exist_ok=True)
@@ -217,7 +222,6 @@ def train(net,
           checkpoint_start_step: int,
           tb_writer_train: SummaryWriter, tb_writer_val: SummaryWriter,
           checkpoint_path: str, logger: logging.Logger) -> None:
-    ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channels)
     global_step = checkpoint_start_step
     gradient_skip_counter = 0.
 
@@ -308,14 +312,6 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
     return per_dim_divs
 
 
-def sample(logits):
-    m, s = torch.chunk(logits, chunks=2, dim=1)
-    return get_output_sampler()(m, s)
-
-
-ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.channels)
-
-
 def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
     net.eval()
 
@@ -351,10 +347,15 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     global_results.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
 
     logger.info(
-        f'Validation Stats|' if global_step is None else
-        f'Validation Stats for global_step {global_step} |'
+        f'Validation Stats|'
         f' Reconstruction Loss {global_results["reconstruction_loss"]:.4f} |'
         f' KL Div {global_results["kl_div"]:.4f} |'f'NELBO {global_results["elbo"]:.6f} |'
         f' SSIM: {global_results["ssim"]:.6f}')
 
     return val_results, val_outputs, val_inputs
+
+
+def model_summary(net):
+    from torchinfo import summary
+    shape = (1,) + prms.data_params.shape
+    return summary(net, input_size=shape, depth=7)

@@ -40,7 +40,7 @@ def main():
     logger.info('Train step generator trainable params {:.3f}m.'.format(
         np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))
     if checkpoint is not None:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        model = checkpoint.get_model()
         logger.info('Loaded Model Checkpoint')
     model = model.to(model.device)
 

@@ -3,7 +3,7 @@ from torch import nn
 from torch import tensor
 
 from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
-#from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate
+from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate, model_summary
 
 
 class Encoder(nn.Module):
@@ -12,11 +12,14 @@ class Encoder(nn.Module):
         self.encoder_blocks: nn.ModuleList = encoder_blocks
         self.device = device
 
-    def forward(self, x: tensor) -> (tensor, dict):
+    def forward(self, x: tensor, to_compute:str = None) -> (tensor, dict):
         computed = x
         output = None
         for block in self.encoder_blocks:
             output, computed = block(computed)
+            if to_compute is not None and to_compute in computed:
+                return computed[to_compute], computed
+        output = output if to_compute is None else None
         return output, computed
 
 
@@ -26,7 +29,7 @@ class Decoder(nn.Module):
         self._decoder_blocks: nn.ModuleList = decoder_blocks
         self._device = device
 
-    def forward(self, computed: dict, variate_masks: list = None) -> (tensor, dict, list):
+    def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
         distributions = []
         output = None
 
@@ -40,6 +43,9 @@ class Decoder(nn.Module):
             output, computed, dists = block(**args)
             if dists is not None:
                 distributions.append(dists)
+            if to_compute is not None and to_compute in computed:
+                return computed[to_compute], computed, distributions
+        output = output if to_compute is None else None
         return output, computed, distributions
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
@@ -69,37 +75,39 @@ class hVAE(nn.Module):
         self.decoder: nn.Module = Decoder(self.decoder, device)
         self.device = device
 
-    def compute(self, block_name) -> (tensor, dict):
-        pass
+    def compute_function(self, block_name) -> (tensor, dict):
+        def compute(x: tensor) -> (tensor, dict):
+            latent, computed = self.encoder(x, to_compute=block_name)
+            if latent is not None:
+                return latent
+            latent, _, _ = self.decoder(computed, to_compute=block_name)
+            return latent
+        return compute
 
     def summary(self):
-        self.to_string()
+        return model_summary(self)
 
-    #def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
-    #    return reconstruct(self, dataset, artifacts_folder, latents_folder)
+    def reconstruct(self, dataset, artifacts_folder=None, latents_folder=None):
+        return reconstruct(self, dataset, artifacts_folder, latents_folder)
 
-    #def generate(self):
-    #    return generate(self)
+    def generate(self):
+        return generate(self)
 
-    #def kldiv_stats(self, dataset):
-    #    return compute_per_dimension_divergence_stats(self, dataset)
+    def kldiv_stats(self, dataset):
+        return compute_per_dimension_divergence_stats(self, dataset)
 
-    #def train_model(self, optimizer, schedule,
-    #                train_loader, val_loader, checkpoint,
-    #                writer_train, writer_val, checkpoint_path, logger=None):
-    #    if logger is None:
-    #        from utils import setup_logger
-    #        logger = setup_logger(checkpoint_path)
-    #    train(self, optimizer, schedule,
-    #          train_loader, val_loader, checkpoint['global_step'],
-    #          writer_train, writer_val, checkpoint_path, logger)
+    def train_model(self, optimizer, schedule,
+                    train_loader, val_loader, checkpoint,
+                    writer_train, writer_val, checkpoint_path, logger=None):
+        if logger is None:
+            from utils import setup_logger
+            logger = setup_logger(checkpoint_path)
+        train(self, optimizer, schedule,
+              train_loader, val_loader, checkpoint['global_step'],
+              writer_train, writer_val, checkpoint_path, logger)
 
-    #def test_model(self, test_loader):
-    #    return evaluate(self, test_loader)
-
-    #def sample(self, logits) -> tensor:
-    #    samples = sample(logits)
-    #    return samples
+    def test_model(self, test_loader):
+        return evaluate(self, test_loader)
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
