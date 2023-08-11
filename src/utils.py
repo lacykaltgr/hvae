@@ -54,41 +54,48 @@ TRAIN/LOG UTILS
 """
 
 
-def get_load_from_dir(mode='train'):
+def get_root_dir(path: str):
+    if path is None:
+        return None
+    path_split = path.split("/")
+    assert path_split[-2] == "checkpoints"
+
+    path = path.split("checkpoints")[0]
+    return path
+
+
+def get_save_load_paths(mode='train'):
     p = get_hparams().log_params
     if mode == 'test':
         load_from = p.load_from_eval
+        assert load_from is not None
+        load_from_file = f'{p.dir}{p.name}/{load_from}'
+        return load_from_file, None
+
     elif mode == 'train':
         load_from = p.load_from_train
+        load_from_file = f'{p.dir}{p.name}/{load_from}' if load_from is not None else None
+        import datetime
+        p = get_hparams().log_params
+        if p.dir_naming_scheme == 'timestamp':
+            save_dir = f"{p.dir}{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}"
+        else:
+            save_dir = f"{p.dir}{p.name}/{p.dir_naming_scheme}"
+        #else:
+        #    raise NotImplementedError(f"Unknown dir_naming_scheme {p.dir_naming_scheme}")
+        os.makedirs(save_dir, exist_ok=True)
+        return load_from_file, save_dir
+
     elif mode == 'synthesis':
         load_from = p.load_from_synthesis
+        assert load_from is not None
+        load_from_file = f'{p.dir}{p.name}/{load_from}'
+        save_dir = os.path.join(get_root_dir(load_from_file), "synthesis")
+        os.makedirs(save_dir, exist_ok=True)
+        return load_from_file, save_dir
+
     else:
         raise ValueError(f"Unknown mode {mode}")
-
-    dir = f'{p.dir}{p.name}'
-
-    # load latest experiment
-    if load_from == 'latest':
-        load_from = sorted(os.listdir(dir))[-1]
-    load_from = "" if load_from is None else load_from
-    load_from_file = f'{dir}/{load_from}'
-    print(f"Loading from {load_from_file}")
-    return load_from_file
-
-
-def get_save_to_dir():
-    import datetime
-    p = get_hparams().log_params
-    if p.dir_naming_scheme == 'timestamp':
-        dir = f"{p.dir}{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        os.makedirs(dir, exist_ok=True)
-        return dir
-    else:
-        dir = f"{p.dir}{p.name}/{p.dir_naming_scheme}"
-        os.makedirs(dir, exist_ok=True)
-        return dir
-    #else:
-    #    raise NotImplementedError(f"Unknown dir_naming_scheme {p.dir_naming_scheme}")
 
 
 def tensorboard_log(model, optimizer, global_step, writer,
@@ -129,14 +136,14 @@ def plot_image(outputs, targets, step, writer):
 
 
 def load_experiment_for(mode: str = 'test'):
-    load_from = get_load_from_dir(mode)
-    save_to = get_save_to_dir()
+    load_from_file, save_to_path = get_save_load_paths(mode)
 
     experiment = None
     # load experiment from checkpoint
-    if os.path.isfile(load_from):
-        experiment = Experiment.load(load_from)
-    return experiment, save_to
+    if load_from_file is not None and os.path.isfile(load_from_file):
+        #print(f"Loading experiment from {load_from_file}")
+        experiment = Experiment.load(load_from_file)
+    return experiment, save_to_path
 
 
 def create_tb_writer_for(mode: str, checkpoint_path: str):
@@ -149,6 +156,10 @@ def create_tb_writer_for(mode: str, checkpoint_path: str):
 
 
 def write_image_to_disk(filepath, image):
+    #TODO működjön minden shapre vagy legalább többre
+    if image.shape[0] != 3:
+        return
+
     from PIL import Image
     assert len(image.shape) == 3
     assert image.shape[0] == 3

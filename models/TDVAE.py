@@ -62,12 +62,12 @@ log_params = Hyperparams(
 
     # EVAL LOG
     # --------------------
-    load_from_eval='2023-08-10_22-13-14/checkpoints/checkpoint-25.pth',
+    load_from_eval='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
 
 
     # SYNTHESIS LOG
     # --------------------
-    load_from_synthesis='2023-08-10_22-13-14/checkpoints/checkpoint-25.pth',
+    load_from_synthesis='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
 )
 
 """
@@ -254,7 +254,7 @@ SYNTHESIS HYPERPARAMETERS
 --------------------
 """
 synthesis_params = Hyperparams(
-    # The synthesis mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
+    # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats')
     synthesis_mode='reconstruction',
 
     # inference batch size (all modes)

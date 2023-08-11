@@ -16,7 +16,7 @@ def divergence_stats_mode(model, dataset, latents_folder):
 
 
 def generation_mode(model, artifacts_folder, logger: logging.Logger = None):
-    artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/generated')
+    artifacts_folder = artifacts_folder.replace('synthesized-images', 'synthesized-images/generated')
     os.makedirs(artifacts_folder, exist_ok=True)
     outputs = generate(model, logger)
     for temp_i, temp_outputs in enumerate(outputs):
@@ -33,7 +33,7 @@ def reconstruction_mode(model, test_dataset, artifacts_folder=None, latents_fold
 
 
 def synthesize(model, data, logdir, mode, logger: logging.Logger = None):
-    artifacts_folder = os.path.join(logdir, 'synthesis-images')
+    artifacts_folder = os.path.join(logdir, 'synthesized-images')
     latents_folder = os.path.join(logdir, 'latents')
     os.makedirs(artifacts_folder, exist_ok=True)
     os.makedirs(latents_folder, exist_ok=True)

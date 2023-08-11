@@ -61,12 +61,12 @@ class OutputBlock(_Block):
         self.net: nn.Sequential = get_net(net)
 
     def forward(self, computed: dict) -> (tensor, dict):
-        if self.input not in computed:
+        if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
-        return output, computed, None
+        return output, computed
 
 
 class EncBlock(_Block):
@@ -75,7 +75,7 @@ class EncBlock(_Block):
         self.net: nn.Sequential = get_net(net)
 
     def forward(self, computed: dict) -> (tensor, dict):
-        if self.input not in computed:
+        if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
@@ -103,7 +103,7 @@ class SimpleDecBlock(_Block):
         return z
 
     def forward(self, computed: dict) -> (tensor, dict, tuple):
-        if self.input not in computed:
+        if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         x = computed[self.input]
         z = self._sample_uncond(x)
@@ -150,9 +150,9 @@ class DecBlock(SimpleDecBlock):
         return z
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
-        if self.input not in computed:
+        if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
-        if self.condition not in computed:
+        if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
         x = computed[self.input]
         cond = computed[self.condition]
@@ -190,10 +190,10 @@ class TopBlock(DecBlock):
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
             # constant tensor with 0 values
-            self.trainable_h = torch.zeros(size=(1, C, H, W), requires_grad=False)
+            self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False)
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
-        if self.condition not in computed:
+        if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
         x = torch.tile(self.trainable_h, (computed[self.condition].shape[0], 1))
         cond = computed[self.condition]
@@ -202,7 +202,7 @@ class TopBlock(DecBlock):
         return z, computed, distributions
 
     def sample_from_prior(self, batch_size: int, t: int or float = None) -> (tensor, dict):
-        y = torch.tile(self.trainable_h, (batch_size, 1, 1, 1))
+        y = torch.tile(self.trainable_h, (batch_size, 1))
         z = self._sample_uncond(y, t)
         computed = {
             self.input: y,

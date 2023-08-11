@@ -135,7 +135,7 @@ SYNTHESIS HYPERPARAMETERS
 --------------------
 """
 synthesis_params = Hyperparams(
-    # The synthesis mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
+    # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats', 'encoding')
     synthesis_mode='reconstruction',
 
     # Whether to use the EMA weights for inference

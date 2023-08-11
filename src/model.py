@@ -116,7 +116,7 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
 
 def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
     if artifacts_folder is not None:
-        artifacts_folder = artifacts_folder.replace('synthesis-images', 'synthesis-images/reconstructed')
+        artifacts_folder = artifacts_folder.replace('synthesized-images', 'synthesized-images/reconstructed')
         os.makedirs(artifacts_folder, exist_ok=True)
     if prms.synthesis_params.mask_reconstruction:
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
@@ -128,20 +128,21 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
     sample_i = 0
 
     io_pairs = list()
+    step = 0
     for step, inputs in enumerate(dataset):
         inputs = inputs.to(device)
         outputs, _, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
-        targets = inputs
 
-        ssim_per_batch = ssim_metric(targets, outputs, global_batch_size=prms.synthesis_params.batch_size)
+        ssim_per_batch = ssim_metric(inputs, outputs, global_batch_size=prms.synthesis_params.batch_size)
         ssims += ssim_per_batch
         nelbo = loss['elbo']
+        rec_loss = loss["reconstruction_loss"]
         kl_div = loss['kl_div']
         nelbos += nelbo
 
         # Save images to disk
         if artifacts_folder is not None:
-            for batch_i, (target, output) in enumerate(zip(targets, outputs)):
+            for batch_i, (target, output) in enumerate(zip(inputs, outputs)):
                 if prms.synthesis_params.save_target_in_reconstruction:
                     write_image_to_disk(
                         os.path.join(artifacts_folder, f'target-{sample_i:04d}.png'),
@@ -150,15 +151,18 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
                     os.path.join(artifacts_folder, f'image-{sample_i:04d}.png'),
                     output.detach().cpu().numpy())
                 io_pairs.append((target, output))
-
                 sample_i += 1
+
         logger.info(
-            f'Step: {step:04d}  | NELBO: {nelbo:.4f} | Reconstruction: {reconstruction_loss:.4f} | '
-            f'kl_div: {kl_div:.4f}| SSIM: {ssim_per_batch:.4f} ')
+            f'Step: {step:04d}  | '
+            f'NELBO: {nelbo:.4f} | '
+            f'Reconstruction: {rec_loss:.4f} | '
+            f'kl_div: {kl_div:.4f}| '
+            f'SSIM: {ssim_per_batch:.4f} ')
 
     nelbo = nelbos / (step + 1)
     ssim = ssims / (step + 1)
-    logger.info('===========================================')
+    print_line(logger, newline_after=False)
     logger.info(f'NELBO: {nelbo:.6f} | SSIM: {ssim:.6f}')
     return io_pairs
 
@@ -182,7 +186,7 @@ def generate(net, logger: logging.Logger):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
             down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder._decoder_blocks))
-            temp_fn = linear_temperature(*temperature_setting, n_layers=down_blocks)
+            temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
             logger.error(f'Temperature Setting {temperature_setting} not interpretable!!')
@@ -299,10 +303,8 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
             inputs = inputs.to(device, non_blocking=True)
             _, _, distributions = net(inputs)
             avg_losses = []
-            for p, q in distributions:
-                q_mu, q_sigma = q
-                p_mu, p_sigma = p
-                _, avg_loss = prms.loss_params.kl_divergence(q_mu=q_mu, q_sigma=q_sigma, p_mu=p_mu, p_sigma=p_sigma)
+            for (q_mu, q_sigma, p_mu, p_sigma) in distributions:
+                _, avg_loss = kl_divergence(q_mu=q_mu, q_sigma=q_sigma, p_mu=p_mu, p_sigma=p_sigma)
                 avg_losses.append(avg_loss)
             kl_div = torch.stack(avg_losses)
             per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
@@ -346,7 +348,8 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     global_results["elbo"] = global_results["kl_div"] + global_results["reconstruction_loss"]
     global_results.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
 
-    logger.info(
+    log = logger.info if logger is not None else print
+    log(
         f'Validation Stats|'
         f' Reconstruction Loss {global_results["reconstruction_loss"]:.4f} |'
         f' KL Div {global_results["kl_div"]:.4f} |'f'NELBO {global_results["elbo"]:.6f} |'

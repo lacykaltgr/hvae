@@ -4,7 +4,7 @@ from torch import tensor
 
 from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate, model_summary
-
+from experiment import Experiment
 
 class Encoder(nn.Module):
     def __init__(self, encoder_blocks: nn.ModuleList, device: str = "cuda"):
@@ -51,7 +51,10 @@ class Decoder(nn.Module):
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
             for i, block in enumerate(self._decoder_blocks):
-                output, computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
+                if isinstance(block, DecBlock):
+                    output, computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
+                else:
+                    output, computed = block(computed)
         return output, computed
 
 
@@ -59,20 +62,29 @@ class hVAE(nn.Module):
     def __init__(self, blocks: dict, device: str = "cuda"):
         super(hVAE, self).__init__()
 
-        self.encoder = nn.ModuleList()
-        self.decoder = nn.ModuleList()
+        self.input_block = None
+        encoder_blocks = nn.ModuleList()
+        decoder_blocks = nn.ModuleList()
+        self.output_block = None
 
         for block in blocks:
             blocks[block].set_output(block)
-            if isinstance(blocks[block], (InputBlock, EncBlock, ConcatBlock)):
-                self.encoder.append(blocks[block])
-            elif isinstance(blocks[block], (DecBlock, ConcatBlock, OutputBlock)):
-                self.decoder.append(blocks[block])
+            if isinstance(blocks[block], EncBlock):
+                encoder_blocks.append(blocks[block])
+            elif isinstance(blocks[block], DecBlock):
+                decoder_blocks.append(blocks[block])
+            elif isinstance(blocks[block], InputBlock):
+                self.input_block = blocks[block]
+            elif isinstance(blocks[block], OutputBlock):
+                self.output_block = blocks[block]
+            elif isinstance(blocks[block], ConcatBlock):
+                encoder_blocks.append(blocks[block])
+                decoder_blocks.append(blocks[block])
             else:
                 raise ValueError(f"Unknown block type {type(blocks[block])}")
 
-        self.encoder: nn.Module = Encoder(self.encoder, device)
-        self.decoder: nn.Module = Decoder(self.decoder, device)
+        self.encoder: nn.Module = Encoder(encoder_blocks, device)
+        self.decoder: nn.Module = Decoder(decoder_blocks, device)
         self.device = device
 
     def compute_function(self, block_name) -> (tensor, dict):
@@ -110,12 +122,15 @@ class hVAE(nn.Module):
         return evaluate(self, test_loader)
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
-        output, computed = self.decoder.sample_from_prior(batch_size, temperatures)
+        _, computed = self.decoder.sample_from_prior(batch_size, temperatures)
+        output, computed =  self.output_block(computed)
         return output, computed
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
-        _, computed = self.encoder(x)
-        output, computed, distributions = self.decoder(computed, variate_masks)
+        _, computed = self.input_block(x)
+        _, computed = self.encoder(computed)
+        _, computed, distributions = self.decoder(computed, variate_masks)
+        output, computed = self.output_block(computed)
         return output, computed, distributions
 
     #TODO
@@ -158,11 +173,14 @@ class hVAE(nn.Module):
                 with_labels=True, node_color="lightblue", ax=plt.gca(), arrowstyle="->")
         plt.show()
 
-    def save(self, path):
-        #TODO
-        torch.save(self.state_dict(), path)
+    def save(self, path) -> None:
+        experiment = Experiment(model=self)
+        experiment.save(path)
+        print(f"Model saved successfully to {path}")
 
     @staticmethod
-    def load(self, path) -> None:
-        #TODO
-        self.load_state_dict(torch.load(path))
+    def load(path) -> tuple:
+        experiment = Experiment.load(path)
+        print(f"Model successfully loaded from {path}")
+        model = experiment.model
+        return model, experiment
