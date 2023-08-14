@@ -1,10 +1,10 @@
 def _model():
-    from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock
+    from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock, SimpleBlock
     from src.hvae import hVAE as hvae
 
     _blocks = dict(
         x=InputBlock(
-            net=torch.nn.Flatten(start_dim=1),
+            net=torch.nn.Flatten(start_dim=0),  #0: batch-flatten, 1: sample-flatten
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
@@ -14,7 +14,12 @@ def _model():
             net=hiddens_to_y_net,
             prior_shape=(1, 1000),
             prior_trainable=True,
-            condition="hiddens"
+            condition="hiddens",
+            output_distribution="laplace"
+        ),
+        y_concat=SimpleBlock(
+            net=y_to_concat_net,
+            input_id="y",
         ),
         z=DecBlock(
             prior_net=z_prior_net,
@@ -24,8 +29,9 @@ def _model():
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, torch.nn.Unflatten(1, (2, 32, 32))],
-            input_id="z"
+            net=[z_to_x_net, torch.nn.Unflatten(1, (2, 40, 40))],
+            input_id="z",
+            output_distribution="normal"
         ),
     )
 
@@ -57,8 +63,8 @@ log_params = Hyperparams(
     dir_naming_scheme='timestamp',
 
     # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
-    checkpoint_interval_in_steps=5,
-    eval_interval_in_steps=5,
+    checkpoint_interval_in_steps=150,
+    eval_interval_in_steps=150,
 
     # EVAL LOG
     # --------------------
@@ -81,23 +87,22 @@ model_params = Hyperparams(
     device='cpu',
     seed=420,
 
-    # Whether to initialize the prior latent layer as zeros (no effect)
-    initialize_prior_weights_as_zero=False,
-
     # Latent layer distribution base can be in ('std', 'logstd').
     # Determines if the model should predict
     # std (with softplus) or logstd (std is computed with exp(logstd)).
-    distribution_base='std',
-    # Similarly for output layer
-    output_distribution='normal',
-    output_distribution_base='std',
-    num_output_mixtures=3,
+    distribution_base='logstd',
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
     # Similarly for output layer
     output_gradient_smoothing_beta=0.6931472,
+
+    # Num of mixtures in the MoL layer
+    num_output_mixtures=3,
+    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
+    # Look at section 6 of the Efficient-VDVAE paper.
+    min_mol_logscale=-250.,
 )
 
 """
@@ -105,11 +110,11 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-import data.mnist as mnist
+from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=mnist.MNISTDataSet(),
+    dataset=dataset("natural", 40),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -117,14 +122,9 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    # Image resolution of the dataset (High and Width, assumed square)
-    target_res=1024,
-    # Image channels of the dataset (Number of color channels)
-    channels=1,
+    shape=(40, 40, 1),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
-
-    shape=(32, 32, 1),
 )
 
 """
@@ -134,9 +134,9 @@ TRAINING HYPERPARAMETERS
 """
 train_params = Hyperparams(
     # The total number of training updates
-    total_train_steps=800000,
+    total_train_steps=640000,
     # training batch size
-    batch_size=32,
+    batch_size=128,
 )
 
 """
@@ -147,33 +147,33 @@ OPTIMIZER HYPERPARAMETERS
 optimizer_params = Hyperparams(
     # Optimizer can be one of ('Radam', 'Adam', 'Adamax').
     # Adam and Radam should be avoided on datasets when the global norm is large!!
-    type='Adamax',
+    type='Adam',
     # Learning rate decay scheme
     # can be one of ('cosine', 'constant', 'exponential', 'noam')
-    learning_rate_scheme='cosine',
-
+    learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=1e-3,
+    learning_rate=.05e-3
+    ,
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
     epsilon=1e-8,
     # L2 weight decay
-    l2_weight=1e-2,
+    l2_weight=0e-6,
 
     # noam/constant/cosine warmup (not much of an effect, done in VDVAE)
     warmup_steps=100.,
     # exponential or cosine
-    # Defines the number of steps over which the learning rate
-    # decays to the minimim value (after decay_start)
+    #   Defines the number of steps over which the learning rate
+    #   decays to the minimim value (after decay_start)
     decay_steps=750000,
-    # Defines the update at which the learning rate starts to decay
+    #   Defines the update at which the learning rate starts to decay
     decay_start=50000,
-    # Defines the minimum learning rate value
+    #   Defines the minimum learning rate value
     min_learning_rate=2e-4,
     # exponential only
-    # Defines the decay rate of the exponential learning rate decay
+    #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
 
 
@@ -188,7 +188,7 @@ optimizer_params = Hyperparams(
     gradient_skip=True,
     # Defines the threshold at which to skip the update.
     # Also defined for nats/dim loss.
-    gradient_skip_threshold=800.
+    gradient_skip_threshold=1e10
 )
 
 """
@@ -201,11 +201,12 @@ loss_params = Hyperparams(
     kldiv_loss="default",
     custom_loss=None,
 
-    # ELBO beta warmup (from NVAE). Doesn't make much of an effect
+    # ELBO beta warmup (from NVAE).
+    # Doesn't make much of an effect
     # but it's safe to use it to avoid posterior collapses as NVAE suggests.
     # lambda of variational prior loss
     # schedule can be in ('None', 'Logistic', 'Linear')
-    variation_schedule='Linear',
+    variation_schedule='None',
 
     # linear beta schedule
     vae_beta_anneal_start=21,
@@ -224,10 +225,6 @@ loss_params = Hyperparams(
     gamma_max_steps=10000,
     scaled_gamma=True,
     gamma_n_groups=100,
-
-    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
-    # Look at section 6 of the Efficient-VDVAE paper.
-    min_mol_logscale=-250.,
 )
 
 """
@@ -241,7 +238,7 @@ eval_params = Hyperparams(
     #TODO: implement
     n_samples_for_validation=5000,
     # validation batch size
-    batch_size=32 * 2,
+    batch_size=128,
 
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
@@ -358,11 +355,13 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
+x_size = torch.prod(data_params.shape)
+
 x_to_hiddens_net = Hyperparams(
     type='mlp',
-    input_size=1024,
-    hidden_sizes=[2000],
-    output_size=1000,
+    input_size=x_size,
+    hidden_sizes=[],
+    output_size=2000,
     activation=torch.nn.ReLU(),
     residual=False
 )
@@ -370,35 +369,44 @@ x_to_hiddens_net = Hyperparams(
 hiddens_to_y_net = Hyperparams(
     type='mlp',
     input_size=2000,
-    hidden_sizes=[2000],
-    output_size=1000,
-    activation=torch.nn.SiLU(),
+    hidden_sizes=[1000, 500],
+    output_size=250,
+    activation=torch.nn.ReLU(),
+    residual=False
+)
+
+y_to_concat_net = Hyperparams(
+    type='mlp',
+    input_size=250,
+    hidden_sizes=[500, 1000],
+    output_size=2000,
+    activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_prior_net = Hyperparams(
     type='mlp',
-    input_size=500,
-    hidden_sizes=[500],
-    output_size=1000,
+    input_size=250,
+    hidden_sizes=[],
+    output_size=2000,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_posterior_net = Hyperparams(
     type='mlp',
-    input_size=1500,
-    hidden_sizes=[2000],
-    output_size=1000,
+    input_size=4000,
+    hidden_sizes=[],
+    output_size=2000,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=500,
-    hidden_sizes=[1000],
-    output_size=2048,
+    input_size=2000,
+    hidden_sizes=[],
+    output_size=x_size,
     activation=torch.nn.ReLU(),
     residual=False
 )

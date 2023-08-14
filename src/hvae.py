@@ -6,6 +6,7 @@ from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate, model_summary
 from experiment import Experiment
 
+
 class Encoder(nn.Module):
     def __init__(self, encoder_blocks: nn.ModuleList, device: str = "cuda"):
         super(Encoder, self).__init__()

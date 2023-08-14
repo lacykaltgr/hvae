@@ -13,7 +13,6 @@ from src.block import DecBlock, TopBlock
 from experiment import Experiment
 from hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
-from src.elements.samplers import get_output_sampler
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
 
 from src.utils import tensorboard_log, get_variate_masks, write_image_to_disk, linear_temperature, \
@@ -65,11 +64,6 @@ def compute_loss(targets: tensor, predictions: tensor, distributions: list, step
     )
 
 
-def sample(logits):
-    m, s = torch.chunk(logits, chunks=2, dim=1)
-    return get_output_sampler()(m, s)
-
-
 def global_norm(net):
     parameters = [p for p in net.parameters() if p.grad is not None and p.requires_grad]
     if len(parameters) == 0:
@@ -110,8 +104,7 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
         if step_n is None:
             step_n = max(prms.loss_params.vae_beta_anneal_steps, prms.loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, predictions, distributions, step_n=step_n)
-        outputs = sample(predictions)
-        return outputs, computed, results
+        return predictions, computed, results
 
 
 def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
@@ -168,8 +161,7 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
 
 
 def generation_step(net, temperatures: list):
-    outputs, computed = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
-    samples = sample(outputs)
+    samples, computed = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
     return samples
 
 
@@ -204,7 +196,6 @@ def generate(net, logger: logging.Logger):
 
 def train_step(net, optimizer, schedule, inputs, step_n):
     predictions, _, distibutions = net(inputs)
-    outputs = sample(predictions)
     results = compute_loss(inputs, predictions, distibutions, step_n=step_n)
 
     results["elbo"].backward()
@@ -217,7 +208,7 @@ def train_step(net, optimizer, schedule, inputs, step_n):
         schedule.step()
 
     optimizer.zero_grad()
-    return outputs, results, global_norm, gradient_skip_counter_delta
+    return predictions, results, global_norm, gradient_skip_counter_delta
 
 
 def train(net,

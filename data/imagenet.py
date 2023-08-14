@@ -3,7 +3,7 @@ import os
 import numpy as np
 from sklearn.utils import shuffle
 
-from hparams import *
+from hparams import get_hparams
 from src.elements.dataset import _DataSet
 
 

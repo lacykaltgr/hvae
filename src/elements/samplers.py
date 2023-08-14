@@ -6,35 +6,40 @@ from hparams import get_hparams
 from src.utils import one_hot
 
 
-def get_output_sampler():
+def get_sampler(distribution="normal"):
     params = get_hparams()
-    if params.model_params.output_distribution == 'normal':
-        return GaussianSampler(
+    if distribution == 'normal':
+        return LocScaleSampler(
             distribution_base=params.model_params.distribution_base,
-            output_distribution=params.model_params.output_distribution
+            output_distribution='normal'
         )
-    elif params.model_params.output_distribution == 'mol':
-        return MixtureOfLogisticsSampler(
-            n_output_mixtures=10, temperature = 1,
+    elif distribution == 'laplace' or distribution== 'uniform':
+        return LocScaleSampler(
             distribution_base=params.model_params.distribution_base,
-            output_distribution=params.model_params.output_distribution,
+            output_distribution='laplace'
+        )
+    # csak a legvégén hasznélható?!
+    elif distribution == 'mixture_of_logistics' or distribution== 'mol':
+        return MixtureOfLogisticsSampler(
+            n_output_mixtures=params.model_params.n_output_mixtures,
+            temperature=1,
+            distribution_base=params.model_params.distribution_base,
             output_gradient_smoothing_beta=params.model_params.output_gradient_smoothing_beta,
-            n_channels=params.data_params.channels,
-            min_mol_logscale=params.loss_params.min_mol_logscale,
+            n_channels=params.data_params.shape[-1],
+            min_mol_logscale=params.model_params.min_mol_logscale,
         )
     else:
-        raise ValueError(f'Unknown output sampler: {params.model_params.output_sampler}')
+        raise ValueError(f'Unknown distribution: {distribution}')
 
 
-class GaussianSampler(nn.Module):
-    def __init__(self,distribution_base='std', output_distribution='normal', gradient_smoothing_beta=1):
-        super(GaussianSampler, self).__init__()
+class LocScaleSampler(nn.Module):
+    def __init__(self, distribution_base='std', output_distribution='normal', gradient_smoothing_beta=1):
+        super(LocScaleSampler, self).__init__()
         self.distribution_base = distribution_base
         self.output_distribution = output_distribution
         self.gradient_smoothing_beta = gradient_smoothing_beta
 
-    def forward(self, mean, std,
-                temperature=None, projection=None):
+    def forward(self, mean, std, temperature=None, projection=None):
         if projection is not None:
             x = torch.cat([mean, std], dim=1)
             x = self.projection(x)
@@ -74,13 +79,12 @@ class GaussianSampler(nn.Module):
 class MixtureOfLogisticsSampler(nn.Module):
 
     def __init__(self, n_output_mixtures=10, temperature = 1,
-                 n_channels = 3, output_gradient_smoothing_beta=1, min_mol_logscale=-7.0,
-                 distribution_base='std', output_distribution='normal'):
+                 n_channels=3, output_gradient_smoothing_beta=1, min_mol_logscale=-7.0,
+                 distribution_base='std'):
         super(MixtureOfLogisticsSampler, self).__init__()
         self.n_output_mixtures = n_output_mixtures
         self.temperature = temperature
         self.distribution_base = distribution_base
-        self.output_distribution = output_distribution
         self.n_channels = n_channels
         self.output_gradient_smoothing_beta = output_gradient_smoothing_beta
         self.min_mol_logscale = min_mol_logscale
@@ -135,14 +139,14 @@ class MixtureOfLogisticsSampler(nn.Module):
 
     def _compute_scales(self, logits):
         softplus = nn.Softplus(beta=self.output_gradient_smoothing_beta)
-        if self.output_distribution_base == 'std':
+        if self.distribution_base == 'std':
             scales = torch.maximum(
                 softplus(logits), torch.as_tensor(np.exp(self.min_mol_logscale)))
-        elif self.output_distribution_base == 'logstd':
+        elif self.distribution_base == 'logstd':
             log_scales = torch.maximum(
                 logits, torch.as_tensor(np.array(self.min_mol_logscale)))
             scales = torch.exp(self.output_gradient_smoothing_beta * log_scales)
         else:
-            raise ValueError(f'distribution base {self.output_distribution_base} not known!!')
+            raise ValueError(f'distribution base {self.distribution_base} not known!!')
         return scales
 

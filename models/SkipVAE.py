@@ -69,6 +69,7 @@ model_params = Hyperparams(
     # Determines if the model should predict
     # std (with softplus) or logstd (std is computed with exp(logstd)).
     distribution_base='std',
+
     # Similarly for output layer
     output_distribution_base='std',
     num_output_mixtures=10,

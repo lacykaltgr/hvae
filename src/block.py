@@ -1,13 +1,12 @@
-from typing import List, Iterator
+from typing import List
 
 import numpy as np
 import torch
 from torch import nn
 from torch import tensor
-from torch.nn import Parameter
 
 from src.elements.nets import get_net
-from src.elements.samplers import GaussianSampler
+from src.elements.samplers import get_sampler
 
 
 class _Block(nn.Module):
@@ -18,6 +17,20 @@ class _Block(nn.Module):
 
     def set_output(self, output: str) -> None:
         self.output = output
+
+
+class SimpleBlock(_Block):
+    def __init__(self, net, input_id: str):
+        super(SimpleBlock, self).__init__(input_id)
+        self.net: nn.Sequential = get_net(net)
+
+    def forward(self, computed: dict) -> (tensor, dict):
+        if self.input not in computed.keys():
+            raise ValueError(f"Input {self.input} not found in computed")
+        inputs = computed[self.input]
+        output = self.net(inputs)
+        computed[self.output] = output
+        return output, computed
 
 
 class ConcatBlock(_Block):
@@ -37,10 +50,9 @@ class ConcatBlock(_Block):
         return x_skip, computed
 
 
-class InputBlock(_Block):
+class InputBlock(SimpleBlock):
     def __init__(self, net):
-        super(InputBlock, self).__init__()
-        self.net: nn.Sequential = get_net(net)
+        super(InputBlock, self).__init__(net, "input")
 
     def forward(self, inputs: tensor) -> (tensor, dict):
         if self.net is None:
@@ -55,51 +67,27 @@ class InputBlock(_Block):
             return output, computed
 
 
-class OutputBlock(_Block):
+class EncBlock(SimpleBlock):
     def __init__(self, net, input_id: str):
-        super(OutputBlock, self).__init__(input_id)
-        self.net: nn.Sequential = get_net(net)
-
-    def forward(self, computed: dict) -> (tensor, dict):
-        if self.input not in computed.keys():
-            raise ValueError(f"Input {self.input} not found in computed")
-        inputs = computed[self.input]
-        output = self.net(inputs)
-        computed[self.output] = output
-        return output, computed
-
-
-class EncBlock(_Block):
-    def __init__(self, net, input_id: str):
-        super(EncBlock, self).__init__(input_id)
-        self.net: nn.Sequential = get_net(net)
-
-    def forward(self, computed: dict) -> (tensor, dict):
-        if self.input not in computed.keys():
-            raise ValueError(f"Input {self.input} not found in computed")
-        inputs = computed[self.input]
-        output = self.net(inputs)
-        computed[self.output] = output
-        return output, computed
+        super(EncBlock, self).__init__(net, input_id)
 
 
 class SimpleDecBlock(_Block):
 
-    gaussian_sampler = GaussianSampler()
-
     def __init__(self, net,
-                 input: str,
+                 input_id: str,
                  output_distribution: str = 'normal'):
-        super(SimpleDecBlock, self).__init__(input)
+        super(SimpleDecBlock, self).__init__(input_id)
         self.prior_net: nn.Sequential = get_net(net)
-        self.output_distribution = output_distribution
+        self.output_distribution = output_distribution,
+        self.sampler = get_sampler(output_distribution)
 
     def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.gaussian_sampler(pm, pv, self.output_distribution)
+        z = self.sampler(pm, pv)
         return z
 
     def forward(self, computed: dict) -> (tensor, dict, tuple):
@@ -115,6 +103,13 @@ class SimpleDecBlock(_Block):
         z = self._sample_uncond(x, t)
         computed[self.output] = z
         return z, computed
+
+
+class OutputBlock(SimpleDecBlock):
+    def __init__(self, net,
+                 input_id: str,
+                 output_distribution: str = 'normal'):
+        super(OutputBlock, self).__init__(net, input_id, output_distribution)
 
 
 class DecBlock(SimpleDecBlock):
@@ -133,10 +128,10 @@ class DecBlock(SimpleDecBlock):
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
-        z = self.gaussian_sampler(qm, qv, self.output_distribution)
+        z = self.sampler(qm, qv)
 
         if variate_mask is not None:
-            z_prior = self.gaussian_sampler(pm, pv)
+            z_prior = self.sampler(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (qm, qv, pm, pv)
@@ -146,7 +141,7 @@ class DecBlock(SimpleDecBlock):
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.gaussian_sampler(pm, pv, self.output_distribution)
+        z = self.sampler(pm, pv)
         return z
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
@@ -226,10 +221,10 @@ class ResidualDecBlock(DecBlock):
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
 
-        z = self.gaussian_sampler(qm, qv, output_distribution=self.output_distribution)
+        z = self.sampler(qm, qv, output_distribution=self.output_distribution)
 
         if variate_mask is not None:
-            z_prior = self.gaussian_sampler(pm, pv)
+            z_prior = self.sampler(pm, pv)
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual
@@ -241,7 +236,7 @@ class ResidualDecBlock(DecBlock):
         y = y + kl_residual
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.gaussian_sampler(pm, pv, output_distribution=self.output_distribution)
+        z = self.sampler(pm, pv, output_distribution=self.output_distribution)
         return z, y
 
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
