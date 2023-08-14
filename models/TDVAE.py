@@ -24,7 +24,7 @@ def _model():
         z=DecBlock(
             prior_net=z_prior_net,
             posterior_net=z_posterior_net,
-            input_id="y",
+            input_id="y_concat",
             condition="hiddens",
             output_distribution="normal"
         ),
