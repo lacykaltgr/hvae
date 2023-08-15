@@ -5,8 +5,8 @@ import torch
 from torch import nn
 from torch import tensor
 
+from src.elements.distributions import generate_distribution
 from src.elements.nets import get_net
-from src.elements.samplers import get_sampler
 
 
 class _Block(nn.Module):
@@ -24,13 +24,13 @@ class SimpleBlock(_Block):
         super(SimpleBlock, self).__init__(input_id)
         self.net: nn.Sequential = get_net(net)
 
-    def forward(self, computed: dict) -> (tensor, dict):
+    def forward(self, computed: dict) -> dict:
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
-        return output, computed
+        return computed
 
 
 class ConcatBlock(_Block):
@@ -38,7 +38,7 @@ class ConcatBlock(_Block):
         super(ConcatBlock, self).__init__(inputs)
         self.dimension = dimension
 
-    def forward(self, computed: dict) -> (tensor, dict):
+    def forward(self, computed: dict) -> dict:
         if not all([inp in computed for inp in self.inputs]):
             raise ValueError("Not all inputs found in computed")
         if len(self.inputs) != 2:
@@ -47,24 +47,18 @@ class ConcatBlock(_Block):
         x, skip = [computed[inp] for inp in self.inputs]
         x_skip = torch.cat([x, skip], dim=self.dimension)
         computed[self.output] = x_skip
-        return x_skip, computed
+        return computed
 
 
 class InputBlock(SimpleBlock):
     def __init__(self, net):
         super(InputBlock, self).__init__(net, "input")
 
-    def forward(self, inputs: tensor) -> (tensor, dict):
-        if self.net is None:
-            computed = {self.output: inputs}
-            return inputs, computed
-        else:
-            output = self.net(inputs)
-            computed = {
-                "input": inputs,
-                self.output: output
-            }
-            return output, computed
+    def forward(self, inputs: tensor) -> dict:
+        return {self.output: inputs} \
+            if self.net is None else \
+            {self.input: inputs,
+             self.output: self.net(inputs)}
 
 
 class EncBlock(SimpleBlock):
@@ -79,30 +73,30 @@ class SimpleDecBlock(_Block):
                  output_distribution: str = 'normal'):
         super(SimpleDecBlock, self).__init__(input_id)
         self.prior_net: nn.Sequential = get_net(net)
-        self.output_distribution = output_distribution,
-        self.sampler = get_sampler(output_distribution)
+        self.output_distribution: str = output_distribution
 
-    def _sample_uncond(self, y: tensor, t: float or int=None) -> tensor:
+    def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.sampler(pm, pv)
-        return z
+        prior = generate_distribution(pm, pv, self.output_distribution)
+        z = prior.sample()
+        return z, (prior, None)
 
-    def forward(self, computed: dict) -> (tensor, dict, tuple):
+    def forward(self, computed: dict) -> (dict, tuple):
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         x = computed[self.input]
-        z = self._sample_uncond(x)
+        z, distribution = self._sample_uncond(x)
         computed[self.output] = z
-        return z, computed, None
+        return computed, distribution
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
         x = computed[self.input]
-        z = self._sample_uncond(x, t)
+        z, _ = self._sample_uncond(x, t)
         computed[self.output] = z
-        return z, computed
+        return computed
 
 
 class OutputBlock(SimpleDecBlock):
@@ -110,6 +104,16 @@ class OutputBlock(SimpleDecBlock):
                  input_id: str,
                  output_distribution: str = 'normal'):
         super(OutputBlock, self).__init__(net, input_id, output_distribution)
+
+    def forward(self, computed: dict) -> (tensor, dict, tuple):
+        computed, distribution = super().forward(computed)
+        output_sample = computed[self.output]
+        return output_sample, computed, distribution
+
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
+        computed = super().sample_from_prior(computed, t)
+        output_sample = computed[self.output]
+        return output_sample, computed
 
 
 class DecBlock(SimpleDecBlock):
@@ -125,26 +129,31 @@ class DecBlock(SimpleDecBlock):
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
-        qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
-        z = self.sampler(qm, qv)
+        prior = generate_distribution(pm, pv, self.output_distribution)
+
+        qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
+        posterior = generate_distribution(qm, qv, self.output_distribution)
+        z = posterior.sample()
 
         if variate_mask is not None:
-            z_prior = self.sampler(pm, pv)
+            z_prior = prior.sample()
             z = self.prune(z, z_prior, variate_mask)
 
-        return z, (qm, qv, pm, pv)
+        return z, (prior, posterior)
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.sampler(pm, pv)
+
+        prior = generate_distribution(pm, pv, self.output_distribution)
+        z = prior.sample()
         return z
 
-    def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
+    def forward(self, computed: dict, variate_mask=None) -> (dict, tuple):
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         if self.condition not in computed.keys():
@@ -153,13 +162,13 @@ class DecBlock(SimpleDecBlock):
         cond = computed[self.condition]
         z, distributions = self._sample(x, cond, variate_mask)
         computed[self.output] = z
-        return z, computed, distributions
+        return computed, distributions
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
         x = computed[self.input]
         z = self._sample_uncond(x, t)
         computed[self.output] = z
-        return z, computed
+        return computed
 
     @staticmethod
     def prune(z, z_prior, variate_mask=None):
@@ -176,25 +185,47 @@ class TopBlock(DecBlock):
     def __init__(self, net,
                  prior_shape: tuple,
                  prior_trainable: bool,
+                 concat_prior: bool,
                  condition: str,
                  output_distribution: str = 'normal'):
         super(TopBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
+        self.concat_prior = concat_prior
         if prior_trainable:
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
-                data=torch.empty(size=prior_shape), requires_grad=True)
+                data=torch.empty(
+                    size=prior_shape if len(prior_shape) > 1 else (1, *prior_shape)),
+                requires_grad=True)
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
             # constant tensor with 0 values
             self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False)
 
+    def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
+        y_prior = self.prior_net(y)
+        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        prior = generate_distribution(pm, pv, self.output_distribution)
+
+        posterior_input = torch.cat([y, cond], dim=1) if self.concat_prior else cond
+        qm, qv = self.posterior_net(posterior_input).chunk(2, dim=1)
+        posterior = generate_distribution(qm, qv, self.output_distribution)
+        z = posterior.sample()
+
+        if variate_mask is not None:
+            z_prior = prior.sample()
+            z = self.prune(z, z_prior, variate_mask)
+
+        return z, (prior, posterior)
+
     def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
         if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
-        x = torch.tile(self.trainable_h, (computed[self.condition].shape[0], 1))
         cond = computed[self.condition]
+        x = torch.tile(self.trainable_h, (cond.shape[0], 1))
+        if cond.shape != x.shape and self.concat_prior:
+            x = x.resize(cond.shape)
         z, distributions = self._sample(x, cond)
         computed[self.output] = z
-        return z, computed, distributions
+        return computed, distributions
 
     def sample_from_prior(self, batch_size: int, t: int or float = None) -> (tensor, dict):
         y = torch.tile(self.trainable_h, (batch_size, 1))
@@ -202,7 +233,8 @@ class TopBlock(DecBlock):
         computed = {
             self.input: y,
             self.output: z}
-        return z, computed
+        return computed
+
 
 
 class ResidualDecBlock(DecBlock):
@@ -217,41 +249,45 @@ class ResidualDecBlock(DecBlock):
         self.z_projection: nn.Sequential = get_net(z_projection)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
-        qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
+
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
+        prior = generate_distribution(pm, pv, self.output_distribution)
 
-        z = self.sampler(qm, qv, output_distribution=self.output_distribution)
+        qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
+        posterior = generate_distribution(qm, qv, self.output_distribution)
+        z = posterior.sample()
 
         if variate_mask is not None:
-            z_prior = self.sampler(pm, pv)
+            z_prior = prior.sample()
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual
-        return z, y, (qm, qv, pm, pv)
+        return z, y, (prior, posterior)
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
-        y = y + kl_residual
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
-        z = self.sampler(pm, pv, output_distribution=self.output_distribution)
+        prior = generate_distribution(pm, pv, self.output_distribution)
+        z = prior.sample()
+        y = y + kl_residual
         return z, y
 
-    def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
+    def forward(self, computed: dict, variate_mask=None) -> (dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
         z, x, distributions = self._sample(x, cond, variate_mask)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
-        return x, computed, distributions
+        return computed, distributions
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
+    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
         x = computed[self.input]
         z, x = self._sample_uncond(x, t)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
-        return x, computed
+        return computed

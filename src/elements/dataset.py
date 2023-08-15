@@ -51,11 +51,14 @@ class MinMax(object):
         return self.__class__.__name__ + '()'
 
 
-default_transform = transforms.Compose([
-    transforms.ToTensor(),
-    #Normalize(),
-    #MinMax(),
-])
+def default_transform():
+
+    return lambda x: transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Resize(params.data_params.shape),
+                #Normalize(),
+                #MinMax(),
+            ])(x)
 
 
 class _DataSet(TorchDataset):
@@ -86,19 +89,6 @@ class _DataSet(TorchDataset):
 
     def mode(self):
         return self.mode
-
-    def __getitem__(self, idx):
-        if self.mode == DataSetState.TRAIN:
-            item = self.train_set[idx]
-            return self.train_transform(item)
-        elif self.mode == DataSetState.VAL:
-            item = self.val_set[idx]
-            return self.val_transform(item)
-        elif self.mode == DataSetState.TEST:
-            item = self.test_set[idx]
-            return self.test_transform(item)
-        else:
-            raise ValueError("Invalid mode")
 
     def __len__(self):
         if self.mode == DataSetState.TRAIN:
@@ -141,10 +131,12 @@ class _DataSet(TorchDataset):
             self.transform = transform
 
         def __getitem__(self, idx):
+            params = get_hparams()
             item = self.data[idx]
             #if self.transform:
             #    item = self.transform(item)
-            return torch.tensor(item).to(torch.float32)
+
+            return torch.tensor(item).view(params.data_params.shape).to(torch.float32)
 
         def __len__(self):
             return self.data.shape[0]

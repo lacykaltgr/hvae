@@ -14,11 +14,11 @@ class TexturesDataset(_DataSet):
         super(TexturesDataset, self).__init__()
 
     def load(self):
-        if not os.path.exists('data/textures/datasets') and len(os.listdir('data/textures/datasets')) == 4:
+        if not len(os.listdir('data/textures/datasets')) == 4:
             run_download_script()
 
         if self.type == "natural":
-            train, val, test = load_texture_ds(image_size=self.image_size)
+            train, val, test = load_natural_ds(image_size=self.image_size)
         elif self.type == "texture":
             train, val, test = load_texture_ds(image_size=self.image_size, whitening=self.whitening)
         else:
@@ -47,11 +47,11 @@ LOAD
 """
 def load_natural_ds(image_size=20):
     if image_size == 20:
-        path = "/data/textures/datasets/fakelabeled_natural_commonfiltered_640000_20px.pkl"
+        path = "data/textures/datasets/fakelabeled_natural_commonfiltered_640000_20px.pkl"
     elif image_size == 40:
-        path = "/data/textures/datasets/fakelabeled_natural_commonfiltered_640000_40px.pkl"
+        path = "data/textures/datasets/fakelabeled_natural_commonfiltered_640000_40px.pkl"
     elif image_size == 50:
-        path = "/data/textures/datasets/fakelabeled_natural_commonfiltered_640000_50px.pkl"
+        path = "data/textures/datasets/fakelabeled_natural_commonfiltered_640000_50px.pkl"
     else:
         raise ValueError('Image size can be either 20px, 40px or 50px')
 
@@ -71,16 +71,16 @@ def load_natural_ds(image_size=20):
 
 def load_texture_ds(image_size=20, whitening="new"):
     if image_size == 20:
-        path = "/data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_20px.pkl"
+        path = "datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_20px.pkl"
     elif image_size == 40:
         if whitening == "old":
-            path = "/data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl"
+            path = "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl"
         elif whitening == "new":
-            path = "/data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_naturalPCA_640000_40px.pkl"
+            path = "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl"#"/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_naturalPCA_640000_40px.pkl"
         else:
             raise TypeError
     elif image_size == 50:
-        path = "/home/data/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_50px.pkl"
+        path = "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_50px.pkl"
     else:
         raise ValueError('Image size can be either 20px, 40px or 50px')
 

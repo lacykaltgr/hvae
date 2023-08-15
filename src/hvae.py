@@ -1,9 +1,11 @@
+import logging
+
 import torch
 from torch import nn
 from torch import tensor
 
-from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock
-from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, sample, evaluate, model_summary
+from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, SimpleDecBlock
+from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 from experiment import Experiment
 
 
@@ -13,15 +15,13 @@ class Encoder(nn.Module):
         self.encoder_blocks: nn.ModuleList = encoder_blocks
         self.device = device
 
-    def forward(self, x: tensor, to_compute:str = None) -> (tensor, dict):
+    def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
-        output = None
         for block in self.encoder_blocks:
-            output, computed = block(computed)
-            if to_compute is not None and to_compute in computed:
-                return computed[to_compute], computed
-        output = output if to_compute is None else None
-        return output, computed
+            computed = block(computed)
+            if to_compute is not None and to_compute in computed.keys():
+                return computed
+        return computed
 
 
 class Decoder(nn.Module):
@@ -32,7 +32,6 @@ class Decoder(nn.Module):
 
     def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
         distributions = []
-        output = None
 
         if variate_masks is None:
             variate_masks = [None] * len(self._decoder_blocks)
@@ -41,22 +40,24 @@ class Decoder(nn.Module):
         for block, variate_mask in zip(self._decoder_blocks, variate_masks):
             args = dict(computed=computed, variate_mask=variate_mask) \
                 if isinstance(block, DecBlock) else dict(computed=computed)
-            output, computed, dists = block(**args)
-            if dists is not None:
+            output = block(**args)
+            if isinstance(output, tuple):
+                computed, dists = output
                 distributions.append(dists)
+            else:
+                computed = output
             if to_compute is not None and to_compute in computed:
-                return computed[to_compute], computed, distributions
-        output = output if to_compute is None else None
-        return output, computed, distributions
+                return computed, distributions
+        return computed, distributions
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
             for i, block in enumerate(self._decoder_blocks):
                 if isinstance(block, DecBlock):
-                    output, computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
+                    computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
                 else:
-                    output, computed = block(computed)
-        return output, computed
+                    computed = block(computed)
+        return computed
 
 
 class hVAE(nn.Module):
@@ -81,6 +82,10 @@ class hVAE(nn.Module):
             elif isinstance(blocks[block], ConcatBlock):
                 encoder_blocks.append(blocks[block])
                 decoder_blocks.append(blocks[block])
+            elif isinstance(blocks[block], SimpleBlock):
+                decoder_blocks.append(blocks[block])
+            elif isinstance(blocks[block], SimpleDecBlock):
+                decoder_blocks.append(blocks[block])
             else:
                 raise ValueError(f"Unknown block type {type(blocks[block])}")
 
@@ -90,11 +95,13 @@ class hVAE(nn.Module):
 
     def compute_function(self, block_name) -> (tensor, dict):
         def compute(x: tensor) -> (tensor, dict):
-            latent, computed = self.encoder(x, to_compute=block_name)
-            if latent is not None:
-                return latent
-            latent, _, _ = self.decoder(computed, to_compute=block_name)
-            return latent
+            computed = self.encoder(x, to_compute=block_name)
+            if block_name in computed.keys():
+                return computed[block_name]
+            computed, _ = self.decoder(computed, to_compute=block_name)
+            if block_name in computed.keys():
+                return computed[block_name]
+            return None
         return compute
 
     def summary(self):
@@ -104,7 +111,8 @@ class hVAE(nn.Module):
         return reconstruct(self, dataset, artifacts_folder, latents_folder)
 
     def generate(self):
-        return generate(self)
+        logger = logging.Logger("generate")
+        return generate(self, logger=logger)
 
     def kldiv_stats(self, dataset):
         return compute_per_dimension_divergence_stats(self, dataset)
@@ -123,16 +131,17 @@ class hVAE(nn.Module):
         return evaluate(self, test_loader)
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
-        _, computed = self.decoder.sample_from_prior(batch_size, temperatures)
-        output, computed =  self.output_block(computed)
-        return output, computed
+        computed = self.decoder.sample_from_prior(batch_size, temperatures)
+        output_sample, computed =  self.output_block(computed)
+        return output_sample, computed
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
-        _, computed = self.input_block(x)
-        _, computed = self.encoder(computed)
-        _, computed, distributions = self.decoder(computed, variate_masks)
-        output, computed = self.output_block(computed)
-        return output, computed, distributions
+        computed = self.input_block(x)
+        computed = self.encoder(computed)
+        computed, distributions = self.decoder(computed, variate_masks)
+        output_sample, computed, output_distribution = self.output_block(computed)
+        distributions.append(output_distribution)
+        return output_sample, computed, distributions
 
     #TODO
     def visualize_graph(self) -> None:

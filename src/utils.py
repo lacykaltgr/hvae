@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from hparams import get_hparams
 from experiment import Experiment
+
 """
 -------------------
 MODEL UTILS
@@ -81,7 +82,7 @@ def get_save_load_paths(mode='train'):
             save_dir = f"{p.dir}{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}"
         else:
             save_dir = f"{p.dir}{p.name}/{p.dir_naming_scheme}"
-        #else:
+        # else:
         #    raise NotImplementedError(f"Unknown dir_naming_scheme {p.dir_naming_scheme}")
         os.makedirs(save_dir, exist_ok=True)
         return load_from_file, save_dir
@@ -141,7 +142,7 @@ def load_experiment_for(mode: str = 'test'):
     experiment = None
     # load experiment from checkpoint
     if load_from_file is not None and os.path.isfile(load_from_file):
-        #print(f"Loading experiment from {load_from_file}")
+        # print(f"Loading experiment from {load_from_file}")
         experiment = Experiment.load(load_from_file)
     return experiment, save_to_path
 
@@ -156,7 +157,7 @@ def create_tb_writer_for(mode: str, checkpoint_path: str):
 
 
 def write_image_to_disk(filepath, image):
-    #TODO működjön minden shapre vagy legalább többre
+    # TODO működjön minden shapre vagy legalább többre
     if image.shape[0] != 3:
         return
 
@@ -206,4 +207,3 @@ def prepare_for_log(results: dict):
 
 def print_line(logger: logging.Logger, newline_after: False):
     logger.info('\n' + '-' * 89 + ('\n' if newline_after else ''))
-

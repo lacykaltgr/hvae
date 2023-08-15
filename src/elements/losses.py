@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.bernoulli import Bernoulli
+from torch.distributions.distribution import Distribution
 
 from hparams import get_hparams
 from ..utils import scale_pixels
@@ -11,11 +12,13 @@ from ..utils import scale_pixels
 def get_reconstruction_loss():
     params = get_hparams()
     if params.loss_params.reconstruction_loss == 'default':
+        return LogProb(data_shape=params.data_params.shape)
+    elif params.loss_params.reconstruction_loss == 'mol':
         return DiscMixLogistic(
             data_shape=params.data_params.shape,
             data_num_bits=params.data_params.num_bits,
             num_output_mixtures=params.model_params.num_output_mixtures,
-            min_log_scale=params.loss_params.min_mol_logscale,
+            min_log_scale=params.model_params.min_mol_logscale,
             distribution_base=params.model_params.distribution_base,
             gradient_smoothing_beta=params.model_params.gradient_smoothing_beta,
         )
@@ -35,6 +38,32 @@ def get_kl_loss():
         )
     else:
         raise ValueError(f'Unknown kl loss: {params.loss_params.kldiv_loss}')
+
+
+class LogProb(nn.Module):
+    def __init__(self, data_shape):
+        super(LogProb, self).__init__()
+        self.data_shape = data_shape
+
+    def forward(self, targets, distribution: Distribution, global_batch_size=32):
+        c = self.data_shape[-1] if len(self.data_shape) > 2 else 1
+        pixel_count = torch.prod(torch.tensor(self.data_shape))
+        targets = targets.reshape(distribution.batch_shape)
+        log_probs = distribution.log_prob(targets)
+
+        mean_axis = list(range(1, len(log_probs.size())))
+        per_example_loss = torch.sum(log_probs, dim=mean_axis)  # B
+        avg_per_example_loss = per_example_loss / (
+                np.prod([log_probs.size()[i] for i in mean_axis]) * c)  # B
+
+        assert len(per_example_loss.size()) == len(avg_per_example_loss.size()) == 1
+
+        scalar = global_batch_size * pixel_count
+
+        loss = torch.sum(per_example_loss) / scalar
+        # divide by ln(2) to convert to bit range (for visualization purposes only)
+        avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
+        return loss, avg_loss, distribution.mean, distribution.stddev
 
 
 class DiscMixLogistic(nn.Module):
@@ -58,40 +87,35 @@ class DiscMixLogistic(nn.Module):
         self.min_pix_value = scale_pixels(0., data_num_bits)
         self.max_pix_value = scale_pixels(255., data_num_bits)
 
-    def forward(self, targets, logits, global_batch_size=32):
-        # Shapes:
-        #    targets: B, C, H, W
-        #    logits: B, M * (3 * C + 1), H, W
+    def forward(self, targets, distribution, global_batch_size=32):
+        # targets:  B, C, H, W
+        # logits:   B, M * (3 * C + 1), H, W
 
+        logits = distribution.logits
         h, w, c = self.data_shape
-
         assert len(targets.shape) == 4
         B, C, H, W = targets.size()
-        if C == 1:
-            targets = targets.repeat(1, 3, 1, 1)
-            logits = logits.repeat(1, 3 * 2, 1, 1)
-            C = 3
         assert C == 3  # only support RGB for now
         n = self.num_output_mixtures
-        targets = targets.unsqueeze(2)  # B, C, 1, H, W
+        targets = targets.unsqueeze(2)      # B, C, 1, H, W
 
-        logit_probs = logits[:, :n, :, :]  # B, M, H, W
-        l = logits[:, n:, :, :]  # B, M*C*3 ,H, W
-        l = l.reshape(B, c, 3 * n, H, W)  # B, C, 3 * M, H, W
+        logit_probs = logits[:, :n, :, :]   # B, M, H, W
+        l = logits[:, n:, :, :]             # B, M*C*3 ,H, W
+        l = l.reshape(B, c, 3 * n, H, W)    # B, C, 3 * M, H, W
 
-        means = l[:, :, :n, :, :]  # B, C, M, H, W
+        means = l[:, :, :n, :, :]           # B, C, M, H, W
         inv_stdv, log_scales = self._compute_inv_stdv(l[:, :, n: 2 * n, :, :])
         coeffs = torch.tanh(l[:, :, 2 * n: 3 * n, :, :])  # B, C, M, H, W
 
         # RGB AR
-        mean1 = means[:, 0:1, :, :, :]  # B, 1, M, H, W
+        mean1 = means[:, 0:1, :, :, :]                                # B, 1, M, H, W
         mean2 = means[:, 1:2, :, :, :] \
                 + coeffs[:, 0:1, :, :, :] * targets[:, 0:1, :, :, :]  # B, 1, M, H, W
         mean3 = means[:, 2:3, :, :, :] \
                 + coeffs[:, 1:2, :, :, :] * targets[:, 0:1, :, :, :] \
                 + coeffs[:, 2:3, :, :, :] * targets[:, 1:2, :, :, :]  # B, 1, M, H, W
 
-        means = torch.cat([mean1, mean2, mean3], dim=1)  # B, C, M, H, W
+        means = torch.cat([mean1, mean2, mean3], dim=1)                # B, C, M, H, W
         centered = targets - means  # B, C, M, H, W
 
         plus_in = inv_stdv * (centered + 1. / self.num_classes)
@@ -181,11 +205,11 @@ class KLDivergence(nn.Module):
         self.gradient_smoothing_beta = gradient_smoothing_beta
         self.data_shape = data_shape
 
-    def forward(self, p_mu, q_mu, p_sigma, q_sigma, global_batch_size=32):
+    def forward(self, prior: Distribution, posterior: Distribution, global_batch_size=32):
         if self.distribution_base == 'std':
-            loss = self.calculate_std_loss(p_mu, q_mu, p_sigma, q_sigma)
+            loss = self.calculate_std_loss(prior.mean, posterior.mean, prior.stddev, prior.stddev)
         elif self.distribution_base == 'logstd':
-            loss = self.calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma, self.gradient_smoothing_beta)
+            loss = self.calculate_logstd_loss(prior.mean, posterior.mean, prior.stddev, posterior.stddev, self.gradient_smoothing_beta)
         else:
             raise ValueError(f'distribution base {self.distribution_base} not known!!')
 
@@ -214,7 +238,7 @@ class KLDivergence(nn.Module):
 
     @staticmethod
     @torch.jit.script
-    def calculate_logstd_loss(self, p_mu, q_mu, p_sigma, q_sigma, gradient_smoothing_beta: float = 1.0):
+    def calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma, gradient_smoothing_beta: float = 1.0):
         q_logstd = q_sigma
         p_logstd = p_sigma
 
@@ -302,9 +326,10 @@ class StructureSimilarityIndexMap(nn.Module):
         self.ssim = SSIM(image_channels=image_channels, max_val=unnormalized_max, filter_size=filter_size)
 
     def forward(self, targets, outputs, global_batch_size):
+        if targets.size() != outputs.size():
+            targets = targets.reshape(outputs.size())
         targets = targets * 127.5 + 127.5
         outputs = outputs * 127.5 + 127.5
-
         assert targets.size() == outputs.size()
         per_example_ssim = self.ssim(targets, outputs)
         mean_axis = list(range(1, len(per_example_ssim.size())))

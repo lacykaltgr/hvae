@@ -4,7 +4,7 @@ def _model():
 
     _blocks = dict(
         x=InputBlock(
-            net=torch.nn.Flatten(start_dim=0),  #0: batch-flatten, 1: sample-flatten
+            net=torch.nn.Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
@@ -12,8 +12,9 @@ def _model():
         ),
         y=TopBlock(
             net=hiddens_to_y_net,
-            prior_shape=(1, 1000),
+            prior_shape=(500, ),
             prior_trainable=True,
+            concat_prior=False,
             condition="hiddens",
             output_distribution="laplace"
         ),
@@ -29,7 +30,7 @@ def _model():
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, torch.nn.Unflatten(1, (2, 40, 40))],
+            net=[z_to_x_net, torch.nn.Unflatten(1, (2, *data_params.shape))],
             input_id="z",
             output_distribution="normal"
         ),
@@ -91,12 +92,11 @@ model_params = Hyperparams(
     # Determines if the model should predict
     # std (with softplus) or logstd (std is computed with exp(logstd)).
     distribution_base='logstd',
+    distribution_sigma_param="var",
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-    # Similarly for output layer
-    output_gradient_smoothing_beta=0.6931472,
 
     # Num of mixtures in the MoL layer
     num_output_mixtures=3,
@@ -114,7 +114,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 40),
+    dataset=dataset("natural", 40, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -122,7 +122,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(40, 40, 1),
+    shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -355,58 +355,62 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_size = torch.prod(data_params.shape)
+x_size = torch.prod(torch.tensor(data_params.shape))
+z_size = 1800
+hiddens_size = 2000
+y_size = 250
 
 x_to_hiddens_net = Hyperparams(
     type='mlp',
     input_size=x_size,
     hidden_sizes=[],
-    output_size=2000,
+    output_size=hiddens_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 hiddens_to_y_net = Hyperparams(
     type='mlp',
-    input_size=2000,
+    input_size=hiddens_size,
     hidden_sizes=[1000, 500],
-    output_size=250,
+    output_size=2*y_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 y_to_concat_net = Hyperparams(
     type='mlp',
-    input_size=250,
+    input_size=y_size,
     hidden_sizes=[500, 1000],
-    output_size=2000,
+    output_size=hiddens_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_prior_net = Hyperparams(
     type='mlp',
-    input_size=250,
-    hidden_sizes=[],
-    output_size=2000,
+    input_size=hiddens_size,
+    hidden_sizes=[2000],
+    output_size=2*z_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_posterior_net = Hyperparams(
     type='mlp',
-    input_size=4000,
+    input_size=2*hiddens_size,
     hidden_sizes=[],
-    output_size=2000,
+    output_size=2*z_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=2000,
+    input_size=z_size,
     hidden_sizes=[],
-    output_size=x_size,
+    output_size=2*x_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
+
