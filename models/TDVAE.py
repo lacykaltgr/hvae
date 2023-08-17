@@ -4,7 +4,7 @@ def _model():
 
     _blocks = dict(
         x=InputBlock(
-            net=torch.nn.Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
+            net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
         hiddens=EncBlock(
             net=x_to_hiddens_net,
@@ -30,7 +30,7 @@ def _model():
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, torch.nn.Unflatten(1, (2, *data_params.shape))],
+            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
             input_id="z",
             output_distribution="normal"
         ),
@@ -114,7 +114,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 40, "old"),
+    dataset=dataset("natural", 20, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -122,7 +122,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(1, 40, 40),
+    shape=(1, 20, 20),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -413,4 +413,41 @@ z_to_x_net = Hyperparams(
     activation=torch.nn.ReLU(),
     residual=False
 )
+
+"""
+--------------------
+CUSTOM MODULES
+--------------------
+"""
+from src.utils import SerializableModule
+
+
+class Flatten(torch.nn.Flatten, SerializableModule):
+    def __init__(self, start_dim=1, end_dim=-1):
+        super(Flatten, self).__init__(start_dim=start_dim, end_dim=end_dim)
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["start_dim"] = self.start_dim
+        serialized["end_dim"] = self.end_dim
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return Flatten(serialized["start_dim"], serialized["end_dim"])
+
+
+class Unflatten(torch.nn.Unflatten, SerializableModule):
+    def __init__(self, dim, unflattened_size):
+        super(Unflatten, self).__init__(dim, unflattened_size)
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["dim"] = self.dim
+        serialized["unflattened_size"] = self.unflattened_size
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return Unflatten(serialized["dim"], serialized["unflattened_size"])
 

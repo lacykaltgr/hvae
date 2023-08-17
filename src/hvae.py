@@ -6,18 +6,17 @@ from torch import tensor
 
 from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, SimpleDecBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
-from experiment import Experiment
 
 
 class Encoder(nn.Module):
     def __init__(self, encoder_blocks: nn.ModuleList, device: str = "cuda"):
         super(Encoder, self).__init__()
-        self.encoder_blocks: nn.ModuleList = encoder_blocks
+        self.blocks: nn.ModuleList = encoder_blocks
         self.device = device
 
     def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
-        for block in self.encoder_blocks:
+        for block in self.blocks:
             computed = block(computed)
             if to_compute is not None and to_compute in computed.keys():
                 return computed
@@ -27,17 +26,17 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, decoder_blocks: nn.ModuleList, device: str = "cuda"):
         super(Decoder, self).__init__()
-        self._decoder_blocks: nn.ModuleList = decoder_blocks
+        self.blocks: nn.ModuleList = decoder_blocks
         self._device = device
 
     def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
         distributions = []
 
         if variate_masks is None:
-            variate_masks = [None] * len(self._decoder_blocks)
-        assert len(variate_masks) == len(self._decoder_blocks)
+            variate_masks = [None] * len(self.blocks)
+        assert len(variate_masks) == len(self.blocks)
 
-        for block, variate_mask in zip(self._decoder_blocks, variate_masks):
+        for block, variate_mask in zip(self.blocks, variate_masks):
             args = dict(computed=computed, variate_mask=variate_mask) \
                 if isinstance(block, DecBlock) else dict(computed=computed)
             output = block(**args)
@@ -52,7 +51,7 @@ class Decoder(nn.Module):
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
-            for i, block in enumerate(self._decoder_blocks):
+            for i, block in enumerate(self.blocks):
                 if isinstance(block, DecBlock):
                     computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
                 else:
@@ -89,8 +88,8 @@ class hVAE(nn.Module):
             else:
                 raise ValueError(f"Unknown block type {type(blocks[block])}")
 
-        self.encoder: nn.Module = Encoder(encoder_blocks, device)
-        self.decoder: nn.Module = Decoder(decoder_blocks, device)
+        self.encoder: Encoder = Encoder(encoder_blocks, device)
+        self.decoder: Decoder = Decoder(decoder_blocks, device)
         self.device = device
 
     def compute_function(self, block_name) -> (tensor, dict):
@@ -156,7 +155,7 @@ class hVAE(nn.Module):
         nodes = list()
         position = dict()
         pos = 0
-        for _, block in self.encoder.encoder_blocks:
+        for _, block in self.encoder.blocks:
             if isinstance(block.input, (list, tuple)):
                 for inp in block.input:
                     encoder_edges.append((inp, block.output))
@@ -183,14 +182,19 @@ class hVAE(nn.Module):
                 with_labels=True, node_color="lightblue", ax=plt.gca(), arrowstyle="->")
         plt.show()
 
-    def save(self, path) -> None:
-        experiment = Experiment(model=self)
-        experiment.save(path)
-        print(f"Model saved successfully to {path}")
+    def serialize(self):
+        blocks = list()
+        blocks.append(self.input_block.serialize())
+        for block in self.encoder.blocks:
+            blocks.append(block.serialize())
+        for block in self.decoder.blocks:
+            blocks.append(block.serialize())
+        blocks.append(self.output_block.serialize())
+        return blocks
 
     @staticmethod
-    def load(path) -> tuple:
-        experiment = Experiment.load(path)
-        print(f"Model successfully loaded from {path}")
-        model = experiment.model
-        return model, experiment
+    def deserialize(serialized_blocks):
+        blocks = dict()
+        for block in serialized_blocks:
+            blocks[block["output"]] = block["type"].deserialize(block)
+        return hVAE(blocks)

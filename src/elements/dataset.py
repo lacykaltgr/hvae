@@ -1,3 +1,4 @@
+from abc import ABC
 from enum import Enum
 
 import numpy as np
@@ -52,7 +53,7 @@ class MinMax(object):
 
 
 def default_transform():
-
+    params = get_hparams()
     return lambda x: transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Resize(params.data_params.shape),
@@ -61,7 +62,7 @@ def default_transform():
             ])(x)
 
 
-class _DataSet(TorchDataset):
+class _DataSet(TorchDataset, ABC):
 
     def __init__(self,
                  train_transform=default_transform,
@@ -73,6 +74,7 @@ class _DataSet(TorchDataset):
         self.val_transform = val_transform
 
         train_data, val_data, test_data = self.load()
+        print(train_data.shape), len(val_data.shape), len(test_data.shape)
 
         self.train_set = self._FunctionalDataset(train_data, self.train_transform)
         self.val_set = self._FunctionalDataset(val_data, self.val_transform)
@@ -121,7 +123,6 @@ class _DataSet(TorchDataset):
                                            shuffle=False,
                                            pin_memory=True,
                                            drop_last=True)
-
     def load(self):
         return None, None, None
 

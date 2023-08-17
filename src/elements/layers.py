@@ -48,7 +48,9 @@ class UnpooLayer(nn.Module):
 class PoolLayer(nn.Module):
     def __init__(self, in_filters, filters, strides):
         super(PoolLayer, self).__init__()
+        self.in_filtes = in_filters
         self.filters = filters
+        self.strides = strides
 
         if isinstance(strides, int):
             strides = (strides, strides)
@@ -75,7 +77,7 @@ class Conv2d(nn.Conv2d):
 
         self.stride = stride
 
-        super(Conv2d, self).__init__(
+        super().__init__(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
@@ -88,9 +90,4 @@ class Conv2d(nn.Conv2d):
         init.xavier_uniform_(self.weight)
         if self.bias is not None:
             init.zeros_(self.bias)
-
-    def forward(self, x):
-        x = super(Conv2d, self).forward(x)
-        return x
-
 

@@ -1,19 +1,20 @@
 from src.elements.layers import *
 from hparams import get_hparams, Hyperparams
+from src.utils import SerializableModule, SerializableSequential as Sequential
 
 
-def get_net(model) -> nn.Sequential:
+def get_net(model) -> Sequential:
     params = get_hparams()
 
     if model is None:
-        return nn.Sequential()
+        return Sequential()
 
     elif isinstance(model, str):
         # Load model from default
         if model == 'mlp':
-            return nn.Sequential(MLPNet.from_hparams(params.mlp_params))
+            return Sequential(MLPNet.from_hparams(params.mlp_params))
         elif model == 'conv':
-            return nn.Sequential(ConvNet.from_hparams(params.cnn_params))
+            return Sequential(ConvNet.from_hparams(params.cnn_params))
         else:
             raise NotImplementedError("Model type not supported.")
     elif isinstance(model, Hyperparams):
@@ -21,25 +22,28 @@ def get_net(model) -> nn.Sequential:
         if "type" not in model.keys():
             raise ValueError("Model type not specified.")
         if model.type == 'mlp':
-            return nn.Sequential(MLPNet.from_hparams(model))
+            return Sequential(MLPNet.from_hparams(model))
         elif model.type == 'conv':
-            return nn.Sequential(ConvNet.from_hparams(model))
+            return Sequential(ConvNet.from_hparams(model))
         else:
             raise NotImplementedError("Model type not supported.")
 
-    elif isinstance(model, nn.Module):
+    elif isinstance(model, SerializableModule):
         # Load model from nn.Module
-        return nn.Sequential(model)
+        return Sequential(model)
+
+    elif isinstance(model, Sequential):
+        return model
 
     elif isinstance(model, list):
         # Load model from list
-        return nn.Sequential(*list(map(get_net, model)))
+        return Sequential(*list(map(get_net, model)))
 
     else:
         raise NotImplementedError("Model type not supported.")
 
 
-class MLPNet(nn.Module):
+class MLPNet(SerializableModule):
     def __init__(self, input_size, hidden_sizes, output_size, residual=False, activation=nn.ReLU()):
         super(MLPNet, self).__init__()
         self.input_size = input_size
@@ -77,9 +81,28 @@ class MLPNet(nn.Module):
             residual=hparams.residual
         )
 
+    def serialize(self):
+        return dict(
+            type=self.__class__.__name__,
+            state_dict=self.state_dict(),
+            params=dict(
+                input_size=self.input_size,
+                hidden_sizes=self.hidden_sizes,
+                output_size=self.output_size,
+                activation=self.activation,
+                residual=self.residual
+            )
+        )
+
+    @staticmethod
+    def deserialize(serialized):
+        net = MLPNet(serialized["params"])
+        net.load_state_dict(serialized["state_dict"])
+
+
 
 #TODO: pool parameterezhető legyen
-class ConvNet(nn.Module):
+class ConvNet(SerializableModule):
     def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
                  , residual=True, use_1x1=True, pool_strides=0, unpool_strides=0, output_ratio=1.0, activation=nn.SiLU()):
         super(ConvNet, self).__init__()
@@ -163,3 +186,28 @@ class ConvNet(nn.Module):
             activation=hparams.activation,
             residual=hparams.residual,
         )
+
+    def serialize(self):
+        return dict(
+            type=self.__class__.__name__,
+            state_dict=self.state_dict(),
+            params=dict(
+                n_layers=self.n_layers,
+                in_filters=self.in_filters,
+                bottleneck_ratio=self.bottleneck_ratio,
+                output_ratio=self.output_ratio,
+                kernel_size=self.kernel_size,
+                init_scaler=self.init_scaler,
+                use_1x1=self.use_1x1,
+                pool_strides=self.pool_strides,
+                unpool_strides=self.unpool_strides,
+                activation=self.activation,
+                residual=self.residual,
+            )
+        )
+
+    @staticmethod
+    def deserialize(serialized):
+        net = ConvNet(serialized["params"])
+        net.load_state_dict(serialized["state_dict"])
+        return net

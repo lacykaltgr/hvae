@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from src.block import DecBlock, TopBlock
-from experiment import Experiment
+from checkpoint import Checkpoint
 from hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
@@ -175,11 +175,11 @@ def generate(net, logger: logging.Logger):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder._decoder_blocks)))
+                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder.blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder._decoder_blocks))
+            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder.blocks))
             temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
@@ -259,14 +259,16 @@ def train(net,
                 print_line(logger, newline_after=False)
 
             if eval_time or first_step:
-                train_inputs = train_inputs.reshape(-1, *prms.data_params.shape)
-                train_outputs = train_outputs.reshape(-1, *prms.data_params.shape)
                 train_ssim = ssim_metric(train_inputs, train_outputs, global_batch_size=prms.train_params.batch_size)
                 logger.info(
                     f'Train Stats for global_step {global_step} | NELBO {train_results["elbo"]} | 'f'SSIM: {train_ssim}')
                 val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger)
                 # Tensorboard logging
                 logger.info('Logging to Tensorboard..')
+                train_inputs = train_inputs.reshape(-1, *prms.data_params.shape)
+                train_outputs = train_outputs.reshape(-1, *prms.data_params.shape)
+                val_inputs = val_inputs.reshape(-1, *prms.data_params.shape)
+                val_outputs = val_outputs.reshape(-1, *prms.data_params.shape)
                 tensorboard_log(net, optimizer, global_step,
                                 tb_writer_train, train_results,
                                 train_outputs, train_inputs, global_norm=global_norm)
@@ -278,7 +280,7 @@ def train(net,
 
             if checkpoint_time or first_step:
                 # Save checkpoint (only if better than best)
-                experiment = Experiment(global_step, net, optimizer, schedule, prms)
+                experiment = Checkpoint(global_step, net, optimizer, schedule, prms)
                 path = experiment.save(checkpoint_path)
                 logger.info(f'Saved checkpoint for global_step {global_step} to {path}')
 

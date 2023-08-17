@@ -7,9 +7,10 @@ from torch import tensor
 
 from src.elements.distributions import generate_distribution
 from src.elements.nets import get_net
+from src.utils import SerializableModule, SerializableSequential as Sequential
 
 
-class _Block(nn.Module):
+class _Block(SerializableModule):
     def __init__(self, input_id: str or List[str] = None):
         super(_Block, self).__init__()
         self.input = input_id
@@ -18,11 +19,18 @@ class _Block(nn.Module):
     def set_output(self, output: str) -> None:
         self.output = output
 
+    def serialize(self) -> dict:
+        return dict(
+            input=self.input,
+            output=self.output,
+            type=self.__class__.__name__
+        )
+
 
 class SimpleBlock(_Block):
     def __init__(self, net, input_id: str):
         super(SimpleBlock, self).__init__(input_id)
-        self.net: nn.Sequential = get_net(net)
+        self.net: Sequential = get_net(net)
 
     def forward(self, computed: dict) -> dict:
         if self.input not in computed.keys():
@@ -31,6 +39,16 @@ class SimpleBlock(_Block):
         output = self.net(inputs)
         computed[self.output] = output
         return computed
+
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["net"] = self.net.serialize()
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return SimpleBlock(net=net, input_id=serialized["input"])
 
 
 class ConcatBlock(_Block):
@@ -49,6 +67,18 @@ class ConcatBlock(_Block):
         computed[self.output] = x_skip
         return computed
 
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["dimension"] = self.dimension
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        return ConcatBlock(
+            inputs=serialized["inputs"],
+            dimension=serialized["dimension"]
+        )
+
 
 class InputBlock(SimpleBlock):
     def __init__(self, net):
@@ -60,10 +90,20 @@ class InputBlock(SimpleBlock):
             {self.input: inputs,
              self.output: self.net(inputs)}
 
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return InputBlock(net=net)
+
 
 class EncBlock(SimpleBlock):
     def __init__(self, net, input_id: str):
         super(EncBlock, self).__init__(net, input_id)
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return EncBlock(net=net, input_id=serialized["input"])
 
 
 class SimpleDecBlock(_Block):
@@ -72,7 +112,7 @@ class SimpleDecBlock(_Block):
                  input_id: str,
                  output_distribution: str = 'normal'):
         super(SimpleDecBlock, self).__init__(input_id)
-        self.prior_net: nn.Sequential = get_net(net)
+        self.prior_net: Sequential = get_net(net)
         self.output_distribution: str = output_distribution
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
@@ -98,6 +138,21 @@ class SimpleDecBlock(_Block):
         computed[self.output] = z
         return computed
 
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["prior_net"] = self.prior_net.serialize()
+        serialized["output_distribution"] = self.output_distribution
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        return SimpleDecBlock(
+            net=prior_net,
+            input_id=serialized["input"],
+            output_distribution=serialized["output_distribution"]
+        )
+
 
 class OutputBlock(SimpleDecBlock):
     def __init__(self, net,
@@ -115,6 +170,15 @@ class OutputBlock(SimpleDecBlock):
         output_sample = computed[self.output]
         return output_sample, computed
 
+    @staticmethod
+    def deserialize(serialized: dict):
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        return OutputBlock(
+            net=prior_net,
+            input_id=serialized["input"],
+            output_distribution=serialized["output_distribution"]
+        )
+
 
 class DecBlock(SimpleDecBlock):
 
@@ -124,8 +188,8 @@ class DecBlock(SimpleDecBlock):
                  input_id: str, condition: str,
                  output_distribution: str = 'normal'):
         super(DecBlock, self).__init__(prior_net, input_id, output_distribution)
-        self.prior_net: nn.Sequential = get_net(prior_net)
-        self.posterior_net: nn.Sequential = get_net(posterior_net)
+        self.prior_net: Sequential = get_net(prior_net)
+        self.posterior_net: Sequential = get_net(posterior_net)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
@@ -179,6 +243,26 @@ class DecBlock(SimpleDecBlock):
         # variate_mask automatically broadcasts to [batch_size, H, W, n_variates]
         z = variate_mask * z + (1. - variate_mask) * z_prior
         return z
+
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["prior_net"] = self.prior_net.serialize()
+        serialized["posterior_net"] = self.posterior_net.serialize()
+        serialized["condition"] = self.condition
+        serialized["output_distribution"] = self.output_distribution
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        posterior_net = Sequential.deserialize(serialized["posterior_net"])
+        return DecBlock(
+            prior_net=prior_net,
+            posterior_net=posterior_net,
+            input_id=serialized["input"],
+            condition=serialized["condition"],
+            output_distribution=serialized["output_distribution"]
+        )
 
 
 class TopBlock(DecBlock):
@@ -235,6 +319,23 @@ class TopBlock(DecBlock):
             self.output: z}
         return computed
 
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["trainable_h"] = self.trainable_h
+        serialized["concat_prior"] = self.concat_prior
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return TopBlock(
+            net=net,
+            prior_shape=serialized["prior_shape"],
+            prior_trainable=serialized["prior_trainable"],
+            concat_prior=serialized["concat_prior"],
+            condition=serialized["condition"],
+            output_distribution=serialized["output_distribution"]
+        )
 
 
 class ResidualDecBlock(DecBlock):
@@ -245,8 +346,8 @@ class ResidualDecBlock(DecBlock):
                  input, condition,
                  output_distribution: str = 'normal'):
         super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
-        self.net: nn.Sequential = get_net(net)
-        self.z_projection: nn.Sequential = get_net(z_projection)
+        self.net: Sequential = get_net(net)
+        self.z_projection: Sequential = get_net(z_projection)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
 
@@ -291,3 +392,25 @@ class ResidualDecBlock(DecBlock):
         x = self.net(x)
         computed[self.output] = x
         return computed
+
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["net"] = self.net.serialize()
+        serialized["z_projection"] = self.z_projection.serialize()
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        posterior_net = Sequential.deserialize(serialized["posterior_net"])
+        z_projection = Sequential.deserialize(serialized["z_projection"])
+        return ResidualDecBlock(
+            net=net,
+            prior_net=prior_net,
+            posterior_net=posterior_net,
+            z_projection=z_projection,
+            input=serialized["input"],
+            condition=serialized["condition"],
+            output_distribution=serialized["output_distribution"]
+        )

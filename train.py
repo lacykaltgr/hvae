@@ -51,6 +51,9 @@ def main():
     writer_train = create_tb_writer_for('train', checkpoint_path=checkpoint_path)
     writer_val = create_tb_writer_for('val', checkpoint_path=checkpoint_path)
 
+    if checkpoint is not None:
+        del checkpoint
+
     train(model, optimizer, schedule, train_loader, val_loader, gloabal_step,
           writer_train, writer_val, checkpoint_path, logger)
 

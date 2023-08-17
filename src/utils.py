@@ -4,10 +4,10 @@ import logging
 import numpy
 import numpy as np
 import torch
+from torch.nn import Sequential, Module
 from torch.utils.tensorboard import SummaryWriter
 
 from hparams import get_hparams
-from experiment import Experiment
 
 """
 -------------------
@@ -137,13 +137,14 @@ def plot_image(outputs, targets, step, writer):
 
 
 def load_experiment_for(mode: str = 'test'):
+    from checkpoint import Checkpoint
     load_from_file, save_to_path = get_save_load_paths(mode)
 
     experiment = None
     # load experiment from checkpoint
     if load_from_file is not None and os.path.isfile(load_from_file):
         # print(f"Loading experiment from {load_from_file}")
-        experiment = Experiment.load(load_from_file)
+        experiment = Checkpoint.load(load_from_file)
     return experiment, save_to_path
 
 
@@ -181,16 +182,6 @@ def setup_logger(checkpoint_path: str) -> logging.Logger:
 
 
 def prepare_for_log(results: dict):
-    """
-    elbo=total_generator_loss,
-    reconstruction_loss=feature_matching_loss,
-    avg_reconstruction_loss=avg_feature_matching_loss,
-    avg_var_prior_losses=avg_global_var_prior_losses,
-    kl_div=kl_div
-    means=means,
-    log_scales=log_scales,
-    """
-
     p = get_hparams().eval_params
     results["elbo"] = results["elbo"].detach().cpu().item()
     results["reconstruction_loss"] = results["reconstruction_loss"].detach().cpu().item()
@@ -207,3 +198,41 @@ def prepare_for_log(results: dict):
 
 def print_line(logger: logging.Logger, newline_after: False):
     logger.info('\n' + '-' * 89 + ('\n' if newline_after else ''))
+
+
+
+"""
+-------------------
+SERIALIZATION UTILS
+-------------------
+"""
+
+
+class SerializableSequential(Sequential):
+
+    def __init__(self, *args):
+        super().__init__(*args)
+
+    def serialize(self):
+        return [layer.serialize() for layer in self._modules.values()]
+
+    @staticmethod
+    def deserialize(serialized):
+        return SerializableSequential(*[
+            layer["type"].__class__.deserialize(layer["params"])
+            for layer in serialized
+        ])
+
+
+class SerializableModule(Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def serialize(self):
+        return dict(type=self.__class__.__name__)
+
+    @staticmethod
+    def deserialize(serialized):
+        return serialized["type"].__class__()
+
