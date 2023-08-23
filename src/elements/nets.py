@@ -53,7 +53,6 @@ class MLPNet(SerializableModule):
         self.residual = residual
 
         layers = []
-
         sizes = [input_size] + hidden_sizes + [output_size]
         for i in range(len(sizes) - 1):
             layers.append(nn.Linear(sizes[i], sizes[i + 1]))
@@ -83,7 +82,7 @@ class MLPNet(SerializableModule):
 
     def serialize(self):
         return dict(
-            type=self.__class__.__name__,
+            type=self.__class__,
             state_dict=self.state_dict(),
             params=dict(
                 input_size=self.input_size,
@@ -96,7 +95,8 @@ class MLPNet(SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        net = MLPNet(serialized["params"])
+        print(serialized)
+        net = MLPNet(**serialized["params"])
         net.load_state_dict(serialized["state_dict"])
 
 
@@ -189,7 +189,7 @@ class ConvNet(SerializableModule):
 
     def serialize(self):
         return dict(
-            type=self.__class__.__name__,
+            type=self.__class__,
             state_dict=self.state_dict(),
             params=dict(
                 n_layers=self.n_layers,
@@ -208,6 +208,6 @@ class ConvNet(SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        net = ConvNet(serialized["params"])
+        net = ConvNet(**serialized["params"])
         net.load_state_dict(serialized["state_dict"])
         return net

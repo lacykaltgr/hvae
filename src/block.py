@@ -23,7 +23,7 @@ class _Block(SerializableModule):
         return dict(
             input=self.input,
             output=self.output,
-            type=self.__class__.__name__
+            type=self.__class__
         )
 
 
@@ -323,11 +323,13 @@ class TopBlock(DecBlock):
         serialized = super().serialize()
         serialized["trainable_h"] = self.trainable_h
         serialized["concat_prior"] = self.concat_prior
+        serialized["prior_shape"] = self.trainable_h.shape
+        serialized["prior_trainable"] = self.trainable_h.requires_grad
         return serialized
 
     @staticmethod
     def deserialize(serialized: dict):
-        net = Sequential.deserialize(serialized["net"])
+        net = Sequential.deserialize(serialized["posterior_net"])
         return TopBlock(
             net=net,
             prior_shape=serialized["prior_shape"],

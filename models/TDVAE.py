@@ -67,14 +67,14 @@ log_params = Hyperparams(
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    # EVAL LOG
+    # EVAL
     # --------------------
-    load_from_eval='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
+    load_from_eval='2023-08-23__13-17/checkpoints/checkpoint-150.pth',
 
 
-    # SYNTHESIS LOG
+    # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
+    load_from_synthesis='2023-08-23__13-17/checkpoints/checkpoint-150.pth',
 )
 
 """
@@ -428,26 +428,32 @@ class Flatten(torch.nn.Flatten, SerializableModule):
 
     def serialize(self):
         serialized = super().serialize()
-        serialized["start_dim"] = self.start_dim
-        serialized["end_dim"] = self.end_dim
+        serialized["params"] = dict(
+            start_dim=self.start_dim,
+            end_dim=self.end_dim
+        )
         return serialized
 
     @staticmethod
     def deserialize(serialized):
-        return Flatten(serialized["start_dim"], serialized["end_dim"])
+        return Flatten(*serialized["params"])
 
 
 class Unflatten(torch.nn.Unflatten, SerializableModule):
     def __init__(self, dim, unflattened_size):
         super(Unflatten, self).__init__(dim, unflattened_size)
+        self.unflattened_size = unflattened_size
+        self.dim = dim
 
     def serialize(self):
         serialized = super().serialize()
-        serialized["dim"] = self.dim
-        serialized["unflattened_size"] = self.unflattened_size
+        serialized["params"] = dict(
+            dim=self.dim,
+            unflattened_size=self.unflattened_size
+        )
         return serialized
 
     @staticmethod
     def deserialize(serialized):
-        return Unflatten(serialized["dim"], serialized["unflattened_size"])
+        return Unflatten(*serialized["params"])
 

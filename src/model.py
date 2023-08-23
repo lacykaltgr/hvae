@@ -228,7 +228,6 @@ def train(net,
         for batch_n, train_inputs in enumerate(train_loader):
             global_step += 1
             train_inputs = train_inputs.to(device, non_blocking=True)
-            print(train_inputs.shape)
             start_time = time.time()
             train_outputs, train_results, global_norm, gradient_skip_counter_delta = \
                 train_step(net, optimizer, schedule, train_inputs, global_step)
@@ -316,6 +315,7 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
 def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
     net.eval()
 
+    n_samples = prms.eval_params.n_samples_for_validation
     val_inputs, val_outputs, val_results = None, None, None
     val_step = 0
     val_feature_matching_losses = 0
@@ -324,6 +324,7 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     val_kl_divs = 0
 
     for val_step, val_inputs in enumerate(val_loader):
+        n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
         val_outputs, val_computed, val_results = \
             reconstruction_step(net, inputs=val_inputs, step_n=global_step)
@@ -335,6 +336,8 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
         val_global_varprior_losses = val_results["avg_var_prior_losses"] \
             if val_global_varprior_losses is None \
             else [u + v for u, v in zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
+        if n_samples <= 0:
+            break
 
     global_results = dict(
         reconstruction_loss=val_feature_matching_losses / (val_step + 1),

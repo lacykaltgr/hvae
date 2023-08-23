@@ -47,7 +47,6 @@ def generate_distribution(mu: tensor, sigma: tensor, distribution: str,
     else:
         raise ValueError(f'Unknown distr {distribution}')
 
-
 class MixtureOfLogistics(dist.distribution.Distribution):
     def __init__(self,
                  logits: tensor,

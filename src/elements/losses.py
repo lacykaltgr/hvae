@@ -46,24 +46,27 @@ class LogProb(nn.Module):
         self.data_shape = data_shape
 
     def forward(self, targets, distribution: Distribution, global_batch_size=32):
-        c = self.data_shape[-1] if len(self.data_shape) > 2 else 1
+        #c = self.data_shape[-1] if len(self.data_shape) > 2 else 1
         pixel_count = torch.prod(torch.tensor(self.data_shape))
         targets = targets.reshape(distribution.batch_shape)
         log_probs = distribution.log_prob(targets)
 
-        mean_axis = list(range(1, len(log_probs.size())))
+        log_probs = torch.flatten(log_probs, start_dim=2)
+        # Note, this is E_{q(y|x)} [ log p(x | z, y)].
+        log_p_x = torch.mean(log_probs, dim=0)  # [B, I]
+
+        # Reduce over all dimensions except batch.
+        mean_axis = list(range(1, len(log_p_x.size())))
         per_example_loss = torch.sum(log_probs, dim=mean_axis)  # B
         avg_per_example_loss = per_example_loss / (
-                np.prod([log_probs.size()[i] for i in mean_axis]) * c)  # B
-
-        assert len(per_example_loss.size()) == len(avg_per_example_loss.size()) == 1
+                np.prod([log_probs.size()[i] for i in mean_axis]))  # B
 
         scalar = global_batch_size * pixel_count
 
         loss = torch.sum(per_example_loss) / scalar
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
-        return loss, avg_loss, distribution.mean, distribution.stddev
+        return -loss, -avg_loss, distribution.mean, distribution.stddev
 
 
 class DiscMixLogistic(nn.Module):

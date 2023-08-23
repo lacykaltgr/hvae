@@ -200,7 +200,6 @@ def print_line(logger: logging.Logger, newline_after: False):
     logger.info('\n' + '-' * 89 + ('\n' if newline_after else ''))
 
 
-
 """
 -------------------
 SERIALIZATION UTILS
@@ -219,7 +218,11 @@ class SerializableSequential(Sequential):
     @staticmethod
     def deserialize(serialized):
         return SerializableSequential(*[
-            layer["type"].__class__.deserialize(layer["params"])
+            layer["type"].deserialize(layer)
+            if isinstance(layer, dict)
+            else SerializableSequential.deserialize(layer)
+            if isinstance(layer, list)
+            else None
             for layer in serialized
         ])
 
@@ -230,9 +233,8 @@ class SerializableModule(Module):
         super().__init__()
 
     def serialize(self):
-        return dict(type=self.__class__.__name__)
+        return dict(type=self.__class__, params=None)
 
     @staticmethod
     def deserialize(serialized):
-        return serialized["type"].__class__()
-
+        return serialized["type"]
