@@ -6,9 +6,18 @@ from hparams import get_hparams
 from src.utils import one_hot
 
 
-def generate_distribution(mu: tensor, sigma: tensor, distribution: str,
-                          sigma_nonlin: str = None, sigma_param: str = None):
-    """Generate a location-scale distribution."""
+def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 'normal',
+                          sigma_nonlin: str = None, sigma_param: str = None) -> dist.Distribution:
+    """
+    Generate parameterized distribution
+
+    :param mu: the mean of the distribution
+    :param sigma: the standard deviation of the distribution, not needed for mixture of logistics
+    :param distribution: 'mixtures_of_logistics', 'normal', 'laplace
+    :param sigma_nonlin: 'logstd', 'std'
+    :param sigma_param: 'var', 'std'
+    :return: torch.distributions.Distribution object
+    """
     params = get_hparams().model_params
 
     if distribution == 'mixture_of_logistics' or distribution == 'mol':
@@ -47,7 +56,22 @@ def generate_distribution(mu: tensor, sigma: tensor, distribution: str,
     else:
         raise ValueError(f'Unknown distr {distribution}')
 
+
 class MixtureOfLogistics(dist.distribution.Distribution):
+
+    """
+    Mixture of logistics distribution
+
+    :param logits: the logits of the distribution
+    :param n_output_mixtures: the number of output mixtures
+    :param temperature: the temperature of the distribution
+    :param n_channels: the number of channels of the distribution
+    :param gradient_smoothing_beta: the beta parameter for the gradient smoothing
+    :param min_mol_logscale: the minimum logscale of the distribution
+    :param min_pix_value: the minimum pixel value of the distribution
+    :param max_pix_value: the maximum pixel value of the distribution
+    :param distribution_base: 'std', 'logstd'
+    """
     def __init__(self,
                  logits: tensor,
                  n_output_mixtures: int = 10,

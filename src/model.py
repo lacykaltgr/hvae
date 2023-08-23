@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.block import DecBlock, TopBlock
+from src.block import GenBlock, TopGenBlock, OutputBlock, SimpleBlock
 from checkpoint import Checkpoint
 from hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
@@ -28,6 +28,16 @@ ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.shape[
 
 
 def compute_loss(targets: tensor, distributions: list, logits: tensor = None, step_n: int = 0) -> dict:
+    """
+    Compute loss for VAE (custom or default)
+    based on Efficient-VDVAE paper
+
+    :param targets: tensor, the target images
+    :param distributions: list, the distributions for each generator block
+    :param logits: tensor, the logits for the output block
+    :param step_n: int, the current step number
+    :return: dict, containing the loss values
+    """
     # Use custom loss funtion if provided
     if prms.loss_params.custom_loss is not None:
         return prms.loss_params.custom_loss(targets=targets, predictions=logits,
@@ -67,6 +77,11 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
 
 
 def global_norm(net):
+    """
+    Compute the global norm of the gradients of the network parameters
+    based on Efficient-VDVAE paper
+    :param net: hVAE, the network
+    """
     parameters = [p for p in net.parameters() if p.grad is not None and p.requires_grad]
     if len(parameters) == 0:
         total_norm = torch.tensor(0.0)
@@ -77,6 +92,10 @@ def global_norm(net):
 
 
 def gradient_clip(net):
+    """
+    Clip the gradients of the network parameters
+    based on Efficient-VDVAE paper
+    """
     if prms.optimizer_params.clip_gradient_norm:
         total_norm = torch.nn.utils.clip_grad_norm_(net.parameters(),
                                                     max_norm=prms.optimizer_params.gradient_clip_norm_value)
@@ -86,6 +105,11 @@ def gradient_clip(net):
 
 
 def gradient_skip(global_norm):
+    """
+    Skip the gradient update if the global norm is too high
+    based on Efficient-VDVAE paper
+    :param global_norm: tensor, the global norm of the gradients
+    """
     if prms.optimizer_params.gradient_skip:
         if torch.any(torch.isnan(global_norm)) or global_norm >= prms.optimizer_params.gradient_skip_threshold:
             skip = True
@@ -100,6 +124,16 @@ def gradient_skip(global_norm):
 
 
 def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
+    """
+    Perform a reconstruction with the given network and inputs
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param inputs: tensor, the input images
+    :param variates_masks: list, the variate masks
+    :param step_n: int, the current step number
+    :return: tensor, tensor, dict, the output images, the computed features, the loss values
+    """
     net.eval()
     with torch.no_grad():
         output_sample, computed, distributions = net(inputs, variates_masks)
@@ -110,6 +144,17 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
 
 
 def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
+    """
+    Reconstruct the images from the given dataset
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param dataset: DataLoader, the dataset
+    :param artifacts_folder: str, the folder to save the images to
+    :param latents_folder: str, the folder to save the latents to
+    :param logger: logging.Logger, the logger
+    :return: list, the input/output pairs
+    """
     if artifacts_folder is not None:
         artifacts_folder = artifacts_folder.replace('synthesized-images', 'synthesized-images/reconstructed')
         os.makedirs(artifacts_folder, exist_ok=True)
@@ -163,11 +208,27 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
 
 
 def generation_step(net, temperatures: list):
+    """
+    Perform a generation with the given network
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param temperatures: list, the temperatures for each generator block
+    :return: tensor, the generated images
+    """
     samples, _ = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
     return samples
 
 
 def generate(net, logger: logging.Logger):
+    """
+    Generate images with the given network
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param logger: logging.Logger, the logger
+    :return: list, the generated images
+    """
     all_outputs = list()
     for temp_i, temperature_setting in enumerate(prms.synthesis_params.temperature_settings):
         logger.info(f'Generating for temperature setting {temp_i:01d}')
@@ -175,11 +236,11 @@ def generate(net, logger: logging.Logger):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder.blocks)))
+                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleBlock)), net.generator.blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (DecBlock, TopBlock)), net.decoder.blocks))
+            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleBlock)), net.generator.blocks))
             temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
@@ -197,6 +258,17 @@ def generate(net, logger: logging.Logger):
 
 
 def train_step(net, optimizer, schedule, inputs, step_n):
+    """
+    Perform a training step with the given network and inputs
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param optimizer: torch.optim.Optimizer, the optimizer
+    :param schedule: torch.optim.lr_scheduler.LRScheduler, the scheduler
+    :param inputs: tensor, the input images
+    :param step_n: int, the current step number
+    :return: tensor, dict, tensor, the output images, the loss values, the global norm of the gradients
+    """
     output_sample, _, distributions = net(inputs)
     results = compute_loss(inputs, distributions, step_n=step_n)
 
@@ -219,6 +291,23 @@ def train(net,
           checkpoint_start_step: int,
           tb_writer_train: SummaryWriter, tb_writer_val: SummaryWriter,
           checkpoint_path: str, logger: logging.Logger) -> None:
+
+    """
+    Train the network
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the networkű
+    :param optimizer: torch.optim.Optimizer, the optimizer
+    :param schedule: torch.optim.lr_scheduler.LRScheduler, the scheduler
+    :param train_loader: DataLoader, the training dataset
+    :param val_loader: DataLoader, the validation dataset
+    :param checkpoint_start_step: int, the step number to start from
+    :param tb_writer_train: SummaryWriter, the tensorboard writer for training
+    :param tb_writer_val: SummaryWriter, the tensorboard writer for validation
+    :param checkpoint_path: str, the path to save the checkpoints to
+    :param logger: logging.Logger, the logger
+    :return: None
+    """
     global_step = checkpoint_start_step
     gradient_skip_counter = 0.
 
@@ -264,10 +353,6 @@ def train(net,
                 val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger)
                 # Tensorboard logging
                 logger.info('Logging to Tensorboard..')
-                train_inputs = train_inputs.reshape(-1, *prms.data_params.shape)
-                train_outputs = train_outputs.reshape(-1, *prms.data_params.shape)
-                val_inputs = val_inputs.reshape(-1, *prms.data_params.shape)
-                val_outputs = val_outputs.reshape(-1, *prms.data_params.shape)
                 tensorboard_log(net, optimizer, global_step,
                                 tb_writer_train, train_results,
                                 train_outputs, train_inputs, global_norm=global_norm)
@@ -293,6 +378,14 @@ def train(net,
 
 
 def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
+    """
+    Compute the per-dimension KL divergence statistics for the given network and dataset
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param dataset: DataLoader, the dataset
+    :return: tensor, the per-dimension KL divergence statistics
+    """
     per_dim_divs = None
     with torch.no_grad():
         for step, inputs in enumerate(tqdm(dataset)):
@@ -313,6 +406,16 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
 
 
 def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
+    """
+    Evaluate the network on the given dataset
+    based on Efficient-VDVAE paper
+
+    :param net: hVAE, the network
+    :param val_loader: DataLoader, the dataset
+    :param global_step: int, the current step number
+    :param logger: logging.Logger, the logger
+    :return: dict, tensor, tensor, the loss values, the output images, the input images
+    """
     net.eval()
 
     n_samples = prms.eval_params.n_samples_for_validation
@@ -361,6 +464,11 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
 
 
 def model_summary(net):
+    """
+    Print the model summary
+    :param net: nn.Module, the network
+    :return: None
+    """
     from torchinfo import summary
     shape = (1,) + prms.data_params.shape
     return summary(net, input_size=shape, depth=7)

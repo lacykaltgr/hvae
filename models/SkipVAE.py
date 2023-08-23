@@ -1,5 +1,5 @@
 def _model():
-    from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock, SimpleBlock, ConcatBlock
+    from src.block import EncBlock, GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ConcatBlock
     from src.hvae import hVAE as hvae
 
     _blocks = dict(
@@ -10,7 +10,7 @@ def _model():
             net=x_to_hiddens_net,
             input_id="x"
         ),
-        y=TopBlock(
+        y=TopGenBlock(
             net=hiddens_to_y_net,
             prior_shape=(1, 1000),
             prior_trainable=True,
@@ -25,7 +25,7 @@ def _model():
             net=y_to_concat_z_net,
             input_id="y",
         ),
-        z=DecBlock(
+        z=GenBlock(
             prior_net=z_prior_net,
             posterior_net=z_posterior_net,
             input_id="y_concat_hiddens",

@@ -1,104 +1,31 @@
-from abc import ABC
-from enum import Enum
+from abc import ABC, abstractmethod
 
-import numpy as np
 import torch
-import torchvision.transforms as transforms
-from PIL import Image
+from src.elements.data_preprocessing import default_transform
 from torch.utils.data import Dataset as TorchDataset
 from hparams import get_hparams
 
 
-class DataSetState(Enum):
-    TRAIN = 0
-    VAL = 1
-    TEST = 2
+class _DataSet(ABC):
 
-
-class Normalize(object):
-    def __call__(self, img):
-        """
-        :param img: PIL): Image
-        :return: Normalized image
-        """
-        params = get_hparams()
-
-        img = np.asarray(img)
-        img_dtype = img.dtype
-
-        img = np.floor(img / np.uint8(2 ** (8 - params.data_params.num_bits))) * 2 ** (8 - params.data_params.num_bits)
-        img = img.astype(img_dtype)
-
-        return Image.fromarray(img)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-
-class MinMax(object):
-    def __call__(self, img):
-        """
-        :param img: PIL): Image
-
-        :return: Tensor
-        """
-        img = np.asarray(img)
-
-        shift = scale = (2 ** 8 - 1) / 2
-        img = (img - shift) / scale  # Images are between [-1, 1]
-        return torch.tensor(img).permute(2, 0, 1).contiguous().float()
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-
-def default_transform():
-    params = get_hparams()
-    return lambda x: transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Resize(params.data_params.shape),
-                #Normalize(),
-                #MinMax(),
-            ])(x)
-
-
-class _DataSet(TorchDataset, ABC):
+    """
+    Abstract class for datasets
+    Inherit from this class to create a new dataset in /data
+    """
 
     def __init__(self,
                  train_transform=default_transform,
                  val_transform=default_transform,
                  test_transform=default_transform):
-        self.mode = DataSetState.TEST
         self.train_transform = train_transform
         self.test_transform = test_transform
         self.val_transform = val_transform
 
         train_data, val_data, test_data = self.load()
-        print(train_data.shape), len(val_data.shape), len(test_data.shape)
 
         self.train_set = self._FunctionalDataset(train_data, self.train_transform)
         self.val_set = self._FunctionalDataset(val_data, self.val_transform)
         self.test_set = self._FunctionalDataset(test_data, self.test_transform)
-
-    def train(self):
-        self.mode = DataSetState.TRAIN
-
-    def eval(self):
-        self.mode = DataSetState.VAL
-
-    def test(self):
-        self.mode = DataSetState.TEST
-
-    def mode(self):
-        return self.mode
-
-    def __len__(self):
-        if self.mode == DataSetState.TRAIN:
-            return len(self.train_set)
-        elif self.mode == DataSetState.VAL:
-            return len(self.val_set)
-        elif self.mode == DataSetState.TEST:
-            return len(self.test_set)
 
     def get_train_loader(self):
         train_params = get_hparams().train_params
@@ -123,10 +50,20 @@ class _DataSet(TorchDataset, ABC):
                                            shuffle=False,
                                            pin_memory=True,
                                            drop_last=True)
+
+    @abstractmethod
     def load(self):
-        return None, None, None
+        """
+        Load data from disk
+        :return: train, val, test
+        """
+        pass
 
     class _FunctionalDataset(TorchDataset):
+
+        """
+        Dataset class for functional datasets (train, validation, test)
+        """
         def __init__(self, data, transform=None):
             self.data = data
             self.transform = transform

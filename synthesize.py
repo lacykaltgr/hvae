@@ -28,8 +28,7 @@ def generation_mode(model, artifacts_folder, logger: logging.Logger = None):
 
 
 def reconstruction_mode(model, test_dataset, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
-    io_pairs = reconstruct(model, test_dataset, artifacts_folder, latents_folder, logger)
-    #return io_pairs
+    reconstruct(model, test_dataset, artifacts_folder, latents_folder, logger)
 
 
 def synthesize(model, data, logdir, mode, logger: logging.Logger = None):
@@ -60,7 +59,7 @@ def main():
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
 
-    model = model.to(model.device)
+    model = model.to(p.model_params.device)
 
     data_loader = None if p.synthesis_params.synthesis_mode == "generation" \
         else p.data_params.dataset.get_test_loader() if p.synthesis_params.synthesis_mode == 'reconstruction' \

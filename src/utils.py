@@ -48,6 +48,15 @@ def linear_temperature(min_temp, max_temp, n_layers):
     return get_layer_temp
 
 
+def split_mu_sigma(x, chunks=2, dim=1):
+    assert x.shape[dim] % chunks == 0
+    mu, sigma = torch.chunk(x, chunks, dim=dim)
+    if mu.shape[dim] == 1:
+        mu = mu.squeeze(dim)
+        sigma = sigma.squeeze(dim)
+    return mu, sigma
+
+
 """
 -------------------
 TRAIN/LOG UTILS
@@ -158,19 +167,21 @@ def create_tb_writer_for(mode: str, checkpoint_path: str):
 
 
 def write_image_to_disk(filepath, image):
-    # TODO működjön minden shapre vagy legalább többre
-    if image.shape[0] != 3:
-        return
-
     from PIL import Image
-    assert len(image.shape) == 3
-    assert image.shape[0] == 3
 
-    image = np.round(image * 127.5 + 127.5)
-    image = image.astype(np.uint8)
-    image = np.transpose(image, (1, 2, 0))
-    im = Image.fromarray(image)
-    im.save(filepath, format='png')
+    if image.shape[0] == 3:
+        image = np.round(image * 127.5 + 127.5)
+        image = image.astype(np.uint8)
+        image = np.transpose(image, (1, 2, 0))
+        im = Image.fromarray(image)
+        im.save(filepath, format='png')
+    else:
+        for im in image:
+            im = im.astype(np.uint8)
+            while len(im.shape) > 2:
+                im = np.squeeze(im, axis=0)
+            im = Image.fromarray(im)
+            im.save(filepath, format='png')
 
 
 def setup_logger(checkpoint_path: str) -> logging.Logger:
@@ -217,14 +228,13 @@ class SerializableSequential(Sequential):
 
     @staticmethod
     def deserialize(serialized):
-        return SerializableSequential(*[
+        sequential = SerializableSequential(*[
             layer["type"].deserialize(layer)
             if isinstance(layer, dict)
             else SerializableSequential.deserialize(layer)
-            if isinstance(layer, list)
-            else None
             for layer in serialized
         ])
+        return sequential
 
 
 class SerializableModule(Module):

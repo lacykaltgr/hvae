@@ -4,15 +4,14 @@ import torch
 from torch import nn
 from torch import tensor
 
-from src.block import DecBlock, EncBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, SimpleDecBlock
+from src.block import TopGenBlock, GenBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, SimpleGenBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
 class Encoder(nn.Module):
-    def __init__(self, encoder_blocks: nn.ModuleList, device: str = "cuda"):
+    def __init__(self, encoder_blocks: nn.ModuleList):
         super(Encoder, self).__init__()
         self.blocks: nn.ModuleList = encoder_blocks
-        self.device = device
 
     def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
@@ -23,11 +22,10 @@ class Encoder(nn.Module):
         return computed
 
 
-class Decoder(nn.Module):
-    def __init__(self, decoder_blocks: nn.ModuleList, device: str = "cuda"):
-        super(Decoder, self).__init__()
-        self.blocks: nn.ModuleList = decoder_blocks
-        self._device = device
+class Generator(nn.Module):
+    def __init__(self, blocks: nn.ModuleList):
+        super(Generator, self).__init__()
+        self.blocks: nn.ModuleList = blocks
 
     def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
         distributions = []
@@ -38,7 +36,7 @@ class Decoder(nn.Module):
 
         for block, variate_mask in zip(self.blocks, variate_masks):
             args = dict(computed=computed, variate_mask=variate_mask) \
-                if isinstance(block, DecBlock) else dict(computed=computed)
+                if isinstance(block, GenBlock) else dict(computed=computed)
             output = block(**args)
             if isinstance(output, tuple):
                 computed, dists = output
@@ -52,7 +50,7 @@ class Decoder(nn.Module):
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
             for i, block in enumerate(self.blocks):
-                if isinstance(block, DecBlock):
+                if isinstance(block, GenBlock):
                     computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
                 else:
                     computed = block(computed)
@@ -60,47 +58,45 @@ class Decoder(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks: dict, device: str = "cuda"):
+    def __init__(self, blocks: dict):
         super(hVAE, self).__init__()
 
-        self.input_block = None
+        self.input_block, output = next(((output, block) for output, block in blocks.items()
+                                         if isinstance(block, InputBlock)), None)
+        self.input_block.set_output(output)
         encoder_blocks = nn.ModuleList()
-        decoder_blocks = nn.ModuleList()
-        self.output_block = None
+        generator_blocks = nn.ModuleList()
+        self.output_block, output = next(((output, block) for output, block in blocks.items()
+                                          if isinstance(block, OutputBlock)), None)
+        self.output_block.set_output(output)
 
-        for block in blocks:
-            blocks[block].set_output(block)
-            if isinstance(blocks[block], EncBlock):
-                encoder_blocks.append(blocks[block])
-            elif isinstance(blocks[block], DecBlock):
-                decoder_blocks.append(blocks[block])
-            elif isinstance(blocks[block], InputBlock):
-                self.input_block = blocks[block]
-            elif isinstance(blocks[block], OutputBlock):
-                self.output_block = blocks[block]
-            elif isinstance(blocks[block], ConcatBlock):
-                encoder_blocks.append(blocks[block])
-                decoder_blocks.append(blocks[block])
-            elif isinstance(blocks[block], SimpleBlock):
-                decoder_blocks.append(blocks[block])
-            elif isinstance(blocks[block], SimpleDecBlock):
-                decoder_blocks.append(blocks[block])
+        output = self.input_block.output
+        in_generator = False
+        while output != self.output_block.input:
+            if output not in blocks.keys():
+                raise ValueError(f"Block {output} not found")
+            block = blocks[output]
+            if not isinstance(block, (SimpleBlock, ConcatBlock)):
+                in_generator = True
+            if in_generator:
+                generator_blocks.append(block)
             else:
-                raise ValueError(f"Unknown block type {type(blocks[block])}")
+                encoder_blocks.append(block)
+            output = block.output
 
-        self.encoder: Encoder = Encoder(encoder_blocks, device)
-        self.decoder: Decoder = Decoder(decoder_blocks, device)
-        self.device = device
+        self.encoder: Encoder = Encoder(encoder_blocks)
+        self.generator: Generator = Generator(generator_blocks)
 
     def compute_function(self, block_name) -> (tensor, dict):
         def compute(x: tensor) -> (tensor, dict):
             computed = self.encoder(x, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
-            computed, _ = self.decoder(computed, to_compute=block_name)
+            computed, _ = self.generator(computed, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
             return None
+
         return compute
 
     def summary(self):
@@ -130,19 +126,19 @@ class hVAE(nn.Module):
         return evaluate(self, test_loader)
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
-        computed = self.decoder.sample_from_prior(batch_size, temperatures)
-        output_sample, computed =  self.output_block(computed)
+        computed = self.generator.sample_from_prior(batch_size, temperatures)
+        output_sample, computed = self.output_block.sample_from_prior(computed)
         return output_sample, computed
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
         computed = self.input_block(x)
         computed = self.encoder(computed)
-        computed, distributions = self.decoder(computed, variate_masks)
+        computed, distributions = self.generator(computed, variate_masks)
         output_sample, computed, output_distribution = self.output_block(computed)
         distributions.append(output_distribution)
         return output_sample, computed, distributions
 
-    #TODO
+    # TODO
     def visualize_graph(self) -> None:
 
         import networkx as nx
@@ -169,7 +165,7 @@ class hVAE(nn.Module):
                     nodes.append(block.input)
                     position[inp] = (0, pos)
                     pos = pos + 1
-        for block in self.decoder.decoder_blocks:
+        for block in self.generator.decoder_blocks:
             if isinstance(block.input, (list, tuple)):
                 for inp in block.input:
                     decoder_edges.append((inp, block.output))
@@ -187,7 +183,7 @@ class hVAE(nn.Module):
         blocks.append(self.input_block.serialize())
         for block in self.encoder.blocks:
             blocks.append(block.serialize())
-        for block in self.decoder.blocks:
+        for block in self.generator.blocks:
             blocks.append(block.serialize())
         blocks.append(self.output_block.serialize())
         return blocks

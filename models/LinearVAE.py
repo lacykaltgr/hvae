@@ -1,7 +1,7 @@
 import torch.nn
 
 import data
-from src.block import InputBlock, OutputBlock, TopBlock
+from src.block import InputBlock, OutputBlock, TopGenBlock
 from src.hvae import hVAE as hvae
 
 
@@ -11,7 +11,7 @@ def _model():
         x=InputBlock(
             net=torch.nn.Flatten(start_dim=0),
         ),
-        z=TopBlock(
+        z=TopGenBlock(
             net=x_to_z_net,
             prior_shape=(1, 1000),
             prior_trainable=True,

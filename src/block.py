@@ -7,10 +7,17 @@ from torch import tensor
 
 from src.elements.distributions import generate_distribution
 from src.elements.nets import get_net
-from src.utils import SerializableModule, SerializableSequential as Sequential
+from src.utils import SerializableModule, SerializableSequential as Sequential, split_mu_sigma
+
+"""
+Sampling and forward methods based on VDAVAE paper
+"""
 
 
 class _Block(SerializableModule):
+    """
+    Base class for all blocks
+    """
     def __init__(self, input_id: str or List[str] = None):
         super(_Block, self).__init__()
         self.input = input_id
@@ -28,6 +35,10 @@ class _Block(SerializableModule):
 
 
 class SimpleBlock(_Block):
+    """
+    Simple block that takes an input and returns an output
+    No sampling is performed
+    """
     def __init__(self, net, input_id: str):
         super(SimpleBlock, self).__init__(input_id)
         self.net: Sequential = get_net(net)
@@ -52,6 +63,9 @@ class SimpleBlock(_Block):
 
 
 class ConcatBlock(_Block):
+    """
+    Concatenates two inputs along a given dimension
+    """
     def __init__(self, inputs: List[str], dimension: int = 1):
         super(ConcatBlock, self).__init__(inputs)
         self.dimension = dimension
@@ -81,6 +95,10 @@ class ConcatBlock(_Block):
 
 
 class InputBlock(SimpleBlock):
+    """
+    Block that takes an input
+    and runs it through a preprocessing net if one is given
+    """
     def __init__(self, net):
         super(InputBlock, self).__init__(net, "input")
 
@@ -96,28 +114,21 @@ class InputBlock(SimpleBlock):
         return InputBlock(net=net)
 
 
-class EncBlock(SimpleBlock):
-    def __init__(self, net, input_id: str):
-        super(EncBlock, self).__init__(net, input_id)
-
-    @staticmethod
-    def deserialize(serialized: dict):
-        net = Sequential.deserialize(serialized["net"])
-        return EncBlock(net=net, input_id=serialized["input"])
-
-
-class SimpleDecBlock(_Block):
+class SimpleGenBlock(_Block):
+    """
+    Takes an input and samples from a prior distribution
+    """
 
     def __init__(self, net,
                  input_id: str,
                  output_distribution: str = 'normal'):
-        super(SimpleDecBlock, self).__init__(input_id)
+        super(SimpleGenBlock, self).__init__(input_id)
         self.prior_net: Sequential = get_net(net)
         self.output_distribution: str = output_distribution
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        pm, pv = split_mu_sigma(y_prior)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
         prior = generate_distribution(pm, pv, self.output_distribution)
@@ -147,14 +158,18 @@ class SimpleDecBlock(_Block):
     @staticmethod
     def deserialize(serialized: dict):
         prior_net = Sequential.deserialize(serialized["prior_net"])
-        return SimpleDecBlock(
+        return SimpleGenBlock(
             net=prior_net,
             input_id=serialized["input"],
             output_distribution=serialized["output_distribution"]
         )
 
 
-class OutputBlock(SimpleDecBlock):
+class OutputBlock(SimpleGenBlock):
+    """
+    Final block of the model
+    Functions like a SimpleDecBlock
+    """
     def __init__(self, net,
                  input_id: str,
                  output_distribution: str = 'normal'):
@@ -180,21 +195,28 @@ class OutputBlock(SimpleDecBlock):
         )
 
 
-class DecBlock(SimpleDecBlock):
+class GenBlock(SimpleGenBlock):
+    """
+    Takes an input,
+    samples from a prior distribution,
+    (takes a condition,
+    samples from a posterior distribution),
+    and returns the sample
+    """
 
     def __init__(self,
                  prior_net,
                  posterior_net,
                  input_id: str, condition: str,
                  output_distribution: str = 'normal'):
-        super(DecBlock, self).__init__(prior_net, input_id, output_distribution)
+        super(GenBlock, self).__init__(prior_net, input_id, output_distribution)
         self.prior_net: Sequential = get_net(prior_net)
         self.posterior_net: Sequential = get_net(posterior_net)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
@@ -209,7 +231,7 @@ class DecBlock(SimpleDecBlock):
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        pm, pv = split_mu_sigma(y_prior)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
 
@@ -256,7 +278,7 @@ class DecBlock(SimpleDecBlock):
     def deserialize(serialized: dict):
         prior_net = Sequential.deserialize(serialized["prior_net"])
         posterior_net = Sequential.deserialize(serialized["posterior_net"])
-        return DecBlock(
+        return GenBlock(
             prior_net=prior_net,
             posterior_net=posterior_net,
             input_id=serialized["input"],
@@ -265,19 +287,28 @@ class DecBlock(SimpleDecBlock):
         )
 
 
-class TopBlock(DecBlock):
+class TopGenBlock(GenBlock):
+    """
+    Top block of the model
+    Constant or trainable prior
+    Posterior is conditioned on the condition
+    """
     def __init__(self, net,
                  prior_shape: tuple,
                  prior_trainable: bool,
                  concat_prior: bool,
                  condition: str,
-                 output_distribution: str = 'normal'):
-        super(TopBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
+                 output_distribution: str = 'normal',
+                 prior_data=None):
+        super(TopGenBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
         self.concat_prior = concat_prior
+        self.prior_shape = prior_shape
+        self.prior_trainable = prior_trainable
+
         if prior_trainable:
             self.trainable_h = torch.nn.Parameter(  # for unconditional generation
-                data=torch.empty(
-                    size=prior_shape if len(prior_shape) > 1 else (1, *prior_shape)),
+                data=prior_data if prior_data is not None else
+                torch.empty(size=prior_shape if len(prior_shape) > 1 else (1, *prior_shape)),
                 requires_grad=True)
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
@@ -286,7 +317,7 @@ class TopBlock(DecBlock):
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         y_prior = self.prior_net(y)
-        pm, pv = torch.chunk(y_prior, chunks=2, dim=1)
+        pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
         posterior_input = torch.cat([y, cond], dim=1) if self.concat_prior else cond
@@ -321,7 +352,7 @@ class TopBlock(DecBlock):
 
     def serialize(self) -> dict:
         serialized = super().serialize()
-        serialized["trainable_h"] = self.trainable_h
+        serialized["trainable_h"] = self.trainable_h.data
         serialized["concat_prior"] = self.concat_prior
         serialized["prior_shape"] = self.trainable_h.shape
         serialized["prior_trainable"] = self.trainable_h.requires_grad
@@ -330,31 +361,35 @@ class TopBlock(DecBlock):
     @staticmethod
     def deserialize(serialized: dict):
         net = Sequential.deserialize(serialized["posterior_net"])
-        return TopBlock(
+        return TopGenBlock(
             net=net,
             prior_shape=serialized["prior_shape"],
             prior_trainable=serialized["prior_trainable"],
             concat_prior=serialized["concat_prior"],
             condition=serialized["condition"],
-            output_distribution=serialized["output_distribution"]
+            output_distribution=serialized["output_distribution"],
+            prior_data=serialized["trainable_h"]
         )
 
 
-class ResidualDecBlock(DecBlock):
+class ResidualGenBlock(GenBlock):
+    """
+    Architecture from VDVAE paper
+    """
     def __init__(self, net,
                  prior_net,
                  posterior_net,
                  z_projection,
                  input, condition,
                  output_distribution: str = 'normal'):
-        super(ResidualDecBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
+        super(ResidualGenBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
         self.net: Sequential = get_net(net)
         self.z_projection: Sequential = get_net(z_projection)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
 
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
+        pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
         qm, qv = self.posterior_net(torch.cat([y, cond], dim=1)).chunk(2, dim=1)
@@ -370,7 +405,7 @@ class ResidualDecBlock(DecBlock):
 
     def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = torch.chunk(y_prior, chunks=3, dim=1)
+        pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
         prior = generate_distribution(pm, pv, self.output_distribution)
@@ -407,7 +442,7 @@ class ResidualDecBlock(DecBlock):
         prior_net = Sequential.deserialize(serialized["prior_net"])
         posterior_net = Sequential.deserialize(serialized["posterior_net"])
         z_projection = Sequential.deserialize(serialized["z_projection"])
-        return ResidualDecBlock(
+        return ResidualGenBlock(
             net=net,
             prior_net=prior_net,
             posterior_net=posterior_net,

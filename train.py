@@ -42,7 +42,7 @@ def main():
     if checkpoint is not None:
         model = checkpoint.get_model()
         logger.info('Loaded Model Checkpoint')
-    model = model.to(model.device)
+    model = model.to(p.model_params.device)
 
     dataset = p.data_params.dataset
     train_loader = dataset.get_train_loader()

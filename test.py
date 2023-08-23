@@ -17,7 +17,7 @@ def main():
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
 
-    model = model.to(model.device)
+    model = model.to(p.model_params.device)
 
     dataset = p.data_params.dataset
     val_loader = dataset.get_val_loader()

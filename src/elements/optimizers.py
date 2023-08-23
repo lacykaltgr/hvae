@@ -5,27 +5,47 @@ import torch.optim as optim
 def get_optimizer(model, type, learning_rate,
                   beta_1, beta_2, epsilon,
                   weight_decay_rate, checkpoint):
+    """
+    Get optimizer for model
+
+    :param model: torch.nn.Module, the model to optimize
+    :param type: str, the type of optimizer to use
+    :param learning_rate: float, the learning rate
+    :param beta_1: float, the beta 1 parameter
+    :param beta_2: float, the beta 2 parameter
+    :param epsilon: float, the epsilon parameter
+    :param weight_decay_rate: float, the weight decay rate
+    :param checkpoint: Checkpoint, the checkpoint to load the optimizer from
+
+    :return: torch.optim.Optimizer, the optimizer
+    """
+
     if type == 'Adamax':
         opt = Adamax
-        opt_kwargs = dict(
-            lr=learning_rate,
-            betas=(beta_1, beta_2),
-            eps=epsilon,
-            weight_decay=weight_decay_rate)
+        opt_kwargs = \
+            dict(
+                lr=learning_rate,
+                betas=(beta_1, beta_2),
+                eps=epsilon,
+                weight_decay=weight_decay_rate)
+
     elif type == 'RAdam':
         opt = optim.RAdam
-        opt_kwargs = dict(
-            lr=learning_rate,
-            betas=(beta_1, beta_2),
-            eps=epsilon,
-            weight_decay=weight_decay_rate)
+        opt_kwargs = \
+            dict(
+                lr=learning_rate,
+                betas=(beta_1, beta_2),
+                eps=epsilon,
+                weight_decay=weight_decay_rate)
+
     elif type == 'Adam':
         opt = torch.optim.Adam
-        opt_kwargs = dict(
-            lr=learning_rate,
-            betas=(beta_1, beta_2),
-            eps=epsilon,
-            weight_decay=weight_decay_rate)
+        opt_kwargs = \
+            dict(
+                lr=learning_rate,
+                betas=(beta_1, beta_2),
+                eps=epsilon,
+                weight_decay=weight_decay_rate)
 
     else:
         raise ValueError(f'Optimizer {type} not known!!')
@@ -120,8 +140,8 @@ class Adamax(optim.Optimizer):
         for i in params:
             params[i]['data'] = torch.stack(params[i]['data'], dim=0)
             grads[i] = torch.stack(grads[i], dim=0)
-            exp_avg[i] = torch.stack(exp_avg[i], dim=0)#.cuda()
-            exp_inf[i] = torch.stack(exp_inf[i], dim=0)#.cuda()
+            exp_avg[i] = torch.stack(exp_avg[i], dim=0)  # .cuda()
+            exp_inf[i] = torch.stack(exp_inf[i], dim=0)  # .cuda()
 
         for group in self.param_groups:
             beta1, beta2 = group['betas']

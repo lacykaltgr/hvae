@@ -10,6 +10,11 @@ from ..utils import scale_pixels
 
 
 def get_reconstruction_loss():
+    """
+    Get reconstruction loss based on hparams
+    :return: nn.Module object for calculating reconstruction loss
+    """
+
     params = get_hparams()
     if params.loss_params.reconstruction_loss == 'default':
         return LogProb(data_shape=params.data_params.shape)
@@ -29,6 +34,10 @@ def get_reconstruction_loss():
 
 
 def get_kl_loss():
+    """
+    Get kl loss based on hparams
+    :return: nn.Module object for calculating kl loss
+    """
     params = get_hparams()
     if params.loss_params.kldiv_loss == 'default':
         return KLDivergence(
@@ -41,43 +50,54 @@ def get_kl_loss():
 
 
 class LogProb(nn.Module):
+
+    """
+    Log probability loss
+    based on original implementation of TDVAE
+    with extra functionality from Efficient-VDVAE paper
+
+    :param data_shape: shape of the data
+    """
     def __init__(self, data_shape):
         super(LogProb, self).__init__()
         self.data_shape = data_shape
 
     def forward(self, targets, distribution: Distribution, global_batch_size=32):
-        #c = self.data_shape[-1] if len(self.data_shape) > 2 else 1
-        pixel_count = torch.prod(torch.tensor(self.data_shape))
         targets = targets.reshape(distribution.batch_shape)
         log_probs = distribution.log_prob(targets)
 
         log_probs = torch.flatten(log_probs, start_dim=2)
-        # Note, this is E_{q(y|x)} [ log p(x | z, y)].
         log_p_x = torch.mean(log_probs, dim=0)  # [B, I]
 
-        # Reduce over all dimensions except batch.
         mean_axis = list(range(1, len(log_p_x.size())))
+
+        # loss for batch
         per_example_loss = torch.sum(log_probs, dim=mean_axis)  # B
+        loss = torch.sum(per_example_loss)
+
+        # avg loss for image
         avg_per_example_loss = per_example_loss / (
-                np.prod([log_probs.size()[i] for i in mean_axis]))  # B
-
-        scalar = global_batch_size * pixel_count
-
-        loss = torch.sum(per_example_loss) / scalar
+            np.prod([log_probs.size()[i] for i in mean_axis]))  # B
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
+
         return -loss, -avg_loss, distribution.mean, distribution.stddev
 
 
 class DiscMixLogistic(nn.Module):
+
+    """
+    Discretized mixture of logistics loss
+    from Efficient-VDVAE paper
+    only supports RGB images for now
+    """
     def __init__(self,
                  data_shape,
                  data_num_bits,
                  num_output_mixtures,
                  min_log_scale,
                  distribution_base,
-                 gradient_smoothing_beta,
-                 ):
+                 gradient_smoothing_beta):
         super(DiscMixLogistic, self).__init__()
         self.data_shape = data_shape
         self.num_output_mixtures = num_output_mixtures
@@ -181,6 +201,11 @@ class DiscMixLogistic(nn.Module):
 
 
 class BernoulliLoss(nn.Module):
+
+    """
+    Bernoulli loss
+    from Efficient-VDVAE paper
+    """
     def __init__(self, data_shape):
         super(BernoulliLoss, self).__init__()
         self.data_shape = data_shape
@@ -201,6 +226,10 @@ class BernoulliLoss(nn.Module):
 
 
 class KLDivergence(nn.Module):
+    """
+    KL divergence loss
+    from Efficient-VDVAE paper
+    """
 
     def __init__(self, distribution_base, gradient_smoothing_beta, data_shape):
         super(KLDivergence, self).__init__()
@@ -255,6 +284,10 @@ class KLDivergence(nn.Module):
 
 
 class SSIM(nn.Module):
+    """
+    Structural similarity index measure
+    from Efficient-VDVAE paper
+    """
     def __init__(self, image_channels, max_val, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03):
         super(SSIM, self).__init__()
         self.max_val = max_val
@@ -324,6 +357,12 @@ class SSIM(nn.Module):
 
 
 class StructureSimilarityIndexMap(nn.Module):
+
+    """
+    Structural similarity index map loss
+    from Efficient-VDVAE paper
+    """
+
     def __init__(self, image_channels, unnormalized_max=255., filter_size=11):
         super(StructureSimilarityIndexMap, self).__init__()
         self.ssim = SSIM(image_channels=image_channels, max_val=unnormalized_max, filter_size=filter_size)

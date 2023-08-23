@@ -4,21 +4,34 @@ from src.utils import SerializableModule, SerializableSequential as Sequential
 
 
 def get_net(model) -> Sequential:
-    params = get_hparams()
+    """
+    Get net from
+    -string model type,
+    -hyperparameter config
+    -SerializableModule or SerializableSequential object
+    -or list of the above
+
+    :param model: str, Hyperparams, SerializableModule, SerializableSequential, list
+    :return: SerializableSequential
+    """
 
     if model is None:
         return Sequential()
 
+    # Load model from default hyperparameter config
     elif isinstance(model, str):
-        # Load model from default
+        params = get_hparams()
         if model == 'mlp':
             return Sequential(MLPNet.from_hparams(params.mlp_params))
         elif model == 'conv':
             return Sequential(ConvNet.from_hparams(params.cnn_params))
         else:
             raise NotImplementedError("Model type not supported.")
+
+
+    # Load model from hyperparameter config
     elif isinstance(model, Hyperparams):
-        # Load model from hyperparameter config
+
         if "type" not in model.keys():
             raise ValueError("Model type not specified.")
         if model.type == 'mlp':
@@ -28,13 +41,17 @@ def get_net(model) -> Sequential:
         else:
             raise NotImplementedError("Model type not supported.")
 
+
+    # Load model from SerializableModule
     elif isinstance(model, SerializableModule):
-        # Load model from nn.Module
         return Sequential(model)
 
+
+    # Load model from SerializableSequential
     elif isinstance(model, Sequential):
         return model
 
+    # Load model from list of any of the above
     elif isinstance(model, list):
         # Load model from list
         return Sequential(*list(map(get_net, model)))
@@ -44,6 +61,16 @@ def get_net(model) -> Sequential:
 
 
 class MLPNet(SerializableModule):
+
+    """
+    Parametric multilayer perceptron network
+
+    :param input_size: int, the size of the input
+    :param hidden_sizes: list of int, the sizes of the hidden layers
+    :param output_size: int, the size of the output
+    :param residual: bool, whether to use residual connections
+    :param activation: torch.nn.Module, the activation function to use
+    """
     def __init__(self, input_size, hidden_sizes, output_size, residual=False, activation=nn.ReLU()):
         super(MLPNet, self).__init__()
         self.input_size = input_size
@@ -95,14 +122,28 @@ class MLPNet(SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        print(serialized)
         net = MLPNet(**serialized["params"])
         net.load_state_dict(serialized["state_dict"])
+        return net
 
 
-
-#TODO: pool parameterezhető legyen
 class ConvNet(SerializableModule):
+    """
+    Parametric convolutional network
+    based on Efficient-VDVAE paper
+
+    :param n_layers: int, the number of convolutional layers
+    :param in_filters: int, the number of input filters
+    :param bottleneck_ratio: float, the ratio of bottleneck filters to input filters
+    :param kernel_size: int or tuple of int, the size of the convolutional kernel
+    :param init_scaler: float, the scaler for the initial weights
+    :param residual: bool, whether to use residual connections
+    :param use_1x1: bool, whether to use 1x1 convolutions
+    :param pool_strides: int or tuple of int, the strides for the pooling layers
+    :param unpool_strides: int or tuple of int, the strides for the unpooling layers
+    :param output_ratio: float, the ratio of output filters to input filters
+    :param activation: torch.nn.Module, the activation function to use
+    """
     def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
                  , residual=True, use_1x1=True, pool_strides=0, unpool_strides=0, output_ratio=1.0, activation=nn.SiLU()):
         super(ConvNet, self).__init__()

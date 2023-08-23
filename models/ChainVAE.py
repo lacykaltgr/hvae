@@ -13,13 +13,13 @@ def _model():
             net=x_to_hiddens_net,
             input_id="x"
         ),
-        y=TopBlock(
+        y=TopGenBlock(
             net=hiddens_to_y_net,
             prior_trainable=False,
             condition="hiddens",
             output_distribution="normal"
         ),
-        z=SimpleDecBlock(
+        z=SimpleGenBlock(
             net=y_to_z_net,
             input_id="y",
         ),

@@ -3,6 +3,9 @@ import os
 
 
 class Checkpoint:
+    """
+    Checkpoint class for saving and loading experiments
+    """
     def __init__(self, global_step=-1, model=None, optimizer=None, scheduler=None, params=None):
         try:
             self.global_step: int = global_step

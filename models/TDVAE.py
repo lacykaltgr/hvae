@@ -1,16 +1,16 @@
 def _model():
-    from src.block import EncBlock, DecBlock, InputBlock, OutputBlock, TopBlock, SimpleBlock
+    from src.block import EncBlock, GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae import hVAE as hvae
 
     _blocks = dict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
-        hiddens=EncBlock(
+        hiddens=SimpleBlock(
             net=x_to_hiddens_net,
             input_id="x"
         ),
-        y=TopBlock(
+        y=TopGenBlock(
             net=hiddens_to_y_net,
             prior_shape=(500, ),
             prior_trainable=True,
@@ -22,7 +22,7 @@ def _model():
             net=y_to_concat_net,
             input_id="y",
         ),
-        z=DecBlock(
+        z=GenBlock(
             prior_net=z_prior_net,
             posterior_net=z_posterior_net,
             input_id="y_concat",
@@ -38,7 +38,6 @@ def _model():
 
     __model = hvae(
         blocks=_blocks,
-        device=model_params.device
     )
 
     return __model
@@ -69,12 +68,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-23__13-17/checkpoints/checkpoint-150.pth',
+    load_from_eval='2023-08-23__14-04/checkpoints/checkpoint-0.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-23__13-17/checkpoints/checkpoint-150.pth',
+    load_from_synthesis='2023-08-23__14-04/checkpoints/checkpoint-0.pth',
 )
 
 """
@@ -436,7 +435,7 @@ class Flatten(torch.nn.Flatten, SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        return Flatten(*serialized["params"])
+        return Flatten(**serialized["params"])
 
 
 class Unflatten(torch.nn.Unflatten, SerializableModule):
@@ -455,5 +454,5 @@ class Unflatten(torch.nn.Unflatten, SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        return Unflatten(*serialized["params"])
+        return Unflatten(**serialized["params"])
 

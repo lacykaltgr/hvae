@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+"""
+Layers are modifications of the ones used in Efficient-VDVAE paper
+"""
+
 
 class Interpolate(nn.Module):
     def __init__(self, scale):

@@ -66,6 +66,7 @@ def load_natural_ds(image_size=20):
     #val_labels = data["train_labels"][train_val_split:]
     test_images = data["test_images"]
     #test_labels = data["test_labels"]
+    print(min(train_images[0]))
     return train_images, val_images, test_images
 
 

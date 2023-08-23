@@ -8,6 +8,11 @@ from hparams import get_hparams
 
 
 def get_gamma_schedule():
+    """
+    Get gamma schedule for VAE
+    Used to weight the KL loss of each group
+    :return: nn.Module or None
+    """
     params = get_hparams()
     return GammaSchedule(max_steps=params.loss_params.gamma_max_steps,
                          num_groups=params.optimizer_params.gamma_n_groups,
@@ -17,6 +22,11 @@ def get_gamma_schedule():
 
 
 def get_beta_schedule():
+    """
+    Get beta schedule for VAE
+    Used to weight the KL loss of each group
+    :return: nn.Module or uniform tensor function
+    """
     params = get_hparams()
     return LogisticBetaSchedule(
         activation_step=params.loss_params.vae_beta_activation_steps,
@@ -32,6 +42,21 @@ def get_beta_schedule():
 
 def get_schedule(optimizer, decay_scheme, warmup_steps, decay_steps, decay_rate, decay_start,
                  min_lr, last_epoch, checkpoint):
+    """
+    Get learning rate schedule
+
+    :param optimizer: torch.optim.Optimizer, the optimizer to schedule
+    :param decay_scheme: str, the decay scheme to use
+    :param warmup_steps: int, the number of warmup steps
+    :param decay_steps: int, the number of decay steps
+    :param decay_rate: float, the decay rate
+    :param decay_start: int, the number of steps before starting decay
+    :param min_lr: float, the minimum learning rate
+    :param last_epoch: int, the last epoch
+    :param checkpoint: Checkpoint, the checkpoint to load the scheduler from
+
+    :return: torch.optim.lr_scheduler.LRScheduler, the scheduler
+    """
     if decay_scheme == 'noam':
         schedule = NoamSchedule(optimizer=optimizer, warmup_steps=warmup_steps, last_epoch=last_epoch)
 
@@ -65,6 +90,10 @@ def get_schedule(optimizer, decay_scheme, warmup_steps, decay_steps, decay_rate,
 
 
 class LogisticBetaSchedule:
+    """
+    Logistic beta schedule for VAE
+    from Efficient-VDVAE paper
+    """
     def __init__(self, activation_step, growth_rate):
         self.beta_max = 1.
         self.activation_step = activation_step
@@ -75,6 +104,10 @@ class LogisticBetaSchedule:
 
 
 class LinearBetaSchedule:
+    """
+    Linear beta schedule for VAE
+    from Efficient-VDVAE paper
+    """
     def __init__(self, anneal_start, anneal_steps, beta_min):
         self.beta_max = 1.
         self.anneal_start = anneal_start
@@ -87,6 +120,10 @@ class LinearBetaSchedule:
 
 
 class GammaSchedule:
+    """
+    Gamma schedule for VAE
+    from Efficient-VDVAE paper
+    """
     def __init__(self, max_steps, num_groups, scaled_gamma=False):
         self.max_steps = max_steps
         self.num_groups = num_groups
@@ -113,6 +150,10 @@ class GammaSchedule:
 
 
 class ConstantLearningRate(LRScheduler):
+    """
+    Constant learning rate scheduler
+    from Efficient-VDVAE paper
+    """
     def __init__(self, optimizer, warmup_steps, last_epoch=-1, verbose=False):
         if warmup_steps != 0:
             self.warmup_steps = warmup_steps
@@ -134,6 +175,10 @@ class ConstantLearningRate(LRScheduler):
 
 
 class NarrowExponentialDecay(LRScheduler):
+    """
+    Narrow exponential learning rate decay scheduler
+    from Efficient-VDVAE paper
+    """
     def __init__(self, optimizer, decay_steps, decay_rate, decay_start,
                  minimum_learning_rate, last_epoch=-1, verbose=False):
         self.decay_steps = decay_steps
@@ -155,6 +200,10 @@ class NarrowExponentialDecay(LRScheduler):
 
 
 class NarrowCosineDecay(CosineAnnealingLR):
+    """
+    Narrow cosine learning rate decay scheduler
+    from Efficient-VDVAE paper
+    """
     def __init__(self, optimizer, decay_steps, warmup_steps, decay_start=0, minimum_learning_rate=None, last_epoch=-1,
                  verbose=False):
         self.decay_steps = decay_steps
@@ -182,6 +231,10 @@ class NarrowCosineDecay(CosineAnnealingLR):
 
 
 class NoamSchedule(LRScheduler):
+    """
+    Noam learning rate scheduler
+    from Efficient-VDVAE paper
+    """
     def __init__(self, optimizer, warmup_steps=4000, last_epoch=-1, verbose=False):
         self.warmup_steps = warmup_steps
         super(NoamSchedule, self).__init__(optimizer=optimizer, last_epoch=last_epoch, verbose=verbose)
