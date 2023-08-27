@@ -109,18 +109,13 @@ def get_save_load_paths(mode='train'):
 
 
 def tensorboard_log(model, optimizer, global_step, writer,
-                    losses, outputs, targets, means=None, log_scales=None,
+                    losses, outputs, targets,
                     updates=None, global_norm=None, mode='train'):
     for key, value in losses.items():
         if isinstance(value, (torch.Tensor, numpy.ndarray)) and len(value.shape) == 0:
             writer.add_scalar(f"Losses/{key}", value, global_step)
     writer.add_histogram("Distributions/target", targets, global_step, bins=20)
     writer.add_histogram("Distributions/output", torch.clamp(outputs, min=-1., max=1.), global_step, bins=20)
-
-    if means is not None:
-        assert log_scales is not None
-        writer.add_histogram('OutputLayer/means', means, global_step, bins=30)
-        writer.add_histogram('OutputLayer/log_scales', log_scales, global_step, bins=30)
 
     if mode == 'train':
         for variable in model.parameters():
@@ -199,12 +194,24 @@ def prepare_for_log(results: dict):
     results["kl_div"] = results["kl_div"].detach().cpu().item()
     results["avg_reconstruction_loss"] = results["avg_reconstruction_loss"].detach().cpu().item()
     results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
-    results["means"] = results["means"].detach().cpu().numpy()
-    results["log_scales"] = results["log_scales"].detach().cpu().numpy()
     results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
                                          for v in results["avg_var_prior_losses"]])
     results.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
     return results
+
+
+def params_to_file(params, filepath):
+    with open(filepath, 'a') as file:
+        text = "PARAMETERS\n"
+        for param_group in params.keys():
+            text += f"{param_group}:\n" \
+                   f"-------------------\n"
+            for param in params[param_group].keys():
+                text += f"{param}: {params[param_group][param]}\n"
+            text += f"-------------------\n"
+        file.write(text)
+        file.close()
+    return True
 
 
 def print_line(logger: logging.Logger, newline_after: False):

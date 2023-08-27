@@ -1,30 +1,31 @@
-import data
-from src.block import *
-from src.hvae import hVAE as hvae
-
-
 def _model():
+    from src.block import SimpleGenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.hvae import hVAE as hvae
+    from src.elements.layers import Flatten, Unflatten
 
     _blocks = dict(
         x=InputBlock(
-            net=None,
+            net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
-        hiddens=EncBlock(
+        hiddens=SimpleBlock(
             net=x_to_hiddens_net,
             input_id="x"
         ),
         y=TopGenBlock(
             net=hiddens_to_y_net,
-            prior_trainable=False,
+            prior_shape=(500, ),
+            prior_trainable=True,
+            concat_prior=False,
             condition="hiddens",
-            output_distribution="normal"
+            output_distribution="laplace"
         ),
         z=SimpleGenBlock(
-            net=y_to_z_net,
+            net=z_prior_net,
             input_id="y",
+            output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=z_to_x_net,
+            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
             input_id="z",
             output_distribution="normal"
         ),
@@ -32,7 +33,6 @@ def _model():
 
     __model = hvae(
         blocks=_blocks,
-        device=model_params.device
     )
 
     return __model
@@ -50,7 +50,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE',
+    name='ChainVAE',
 
     # TRAIN LOG
     # --------------------
@@ -61,14 +61,14 @@ log_params = Hyperparams(
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    # EVAL LOG
+    # EVAL
     # --------------------
-    load_from_eval='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
+    load_from_eval='2023-08-27__23-22/checkpoints/checkpoint-450.pth',
 
 
-    # SYNTHESIS LOG
+    # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-11__20-17/checkpoints/checkpoint-5.pth',
+    load_from_synthesis='2023-08-27__23-22/checkpoints/checkpoint-450.pth',
 )
 
 """
@@ -86,12 +86,11 @@ model_params = Hyperparams(
     # Determines if the model should predict
     # std (with softplus) or logstd (std is computed with exp(logstd)).
     distribution_base='logstd',
+    distribution_sigma_param="var",
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-    # Similarly for output layer
-    output_gradient_smoothing_beta=0.6931472,
 
     # Num of mixtures in the MoL layer
     num_output_mixtures=3,
@@ -109,7 +108,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 40),
+    dataset=dataset("natural", 20, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -117,7 +116,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(40, 40, 1),
+    shape=(1, 20, 20),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -247,7 +246,7 @@ SYNTHESIS HYPERPARAMETERS
 """
 synthesis_params = Hyperparams(
     # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats')
-    synthesis_mode='reconstruction',
+    synthesis_mode='div_stats',
 
     # inference batch size (all modes)
     # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
@@ -350,49 +349,45 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
+x_size = torch.prod(torch.tensor(data_params.shape))
+z_size = 1800
+hiddens_size = 2000
+y_size = 250
+
 x_to_hiddens_net = Hyperparams(
     type='mlp',
-    input_size=784,
-    hidden_sizes=[2000],
-    output_size=1000,
+    input_size=x_size,
+    hidden_sizes=[],
+    output_size=hiddens_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 hiddens_to_y_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
+    type='mlp',
+    input_size=hiddens_size,
+    hidden_sizes=[1000, 500],
+    output_size=2*y_size,
+    activation=torch.nn.ReLU(),
+    residual=False
 )
 
-y_to_z_net = Hyperparams(
-    type="conv",
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=0.5,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool=False,
-    unpool=False,
-    activation=None,
-    residual=False,
+
+z_prior_net = Hyperparams(
+    type='mlp',
+    input_size=y_size,
+    hidden_sizes=[2000],
+    output_size=2*z_size,
+    activation=torch.nn.ReLU(),
+    residual=False
 )
 
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=784,
-    hidden_sizes=[2000],
-    output_size=1000,
+    input_size=z_size,
+    hidden_sizes=[],
+    output_size=2*x_size,
     activation=torch.nn.ReLU(),
     residual=False
 )

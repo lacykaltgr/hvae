@@ -55,7 +55,7 @@ def main():
 
     assert checkpoint is not None
     model = checkpoint.get_model()
-    logger.info('Model Checkpoint is loaded')
+    logger.info(f'Model Checkpoint is loaded from {p.log_params.load_from_synthesis}')
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
 

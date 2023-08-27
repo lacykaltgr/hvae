@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.block import GenBlock, TopGenBlock, OutputBlock, SimpleBlock
+from src.block import GenBlock, TopGenBlock, OutputBlock, SimpleBlock, SimpleGenBlock
 from checkpoint import Checkpoint
 from hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
@@ -44,8 +44,7 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
                                             distributions=distributions, step_n=step_n)
 
     output_distribution = distributions[-1][0]
-    feature_matching_loss, avg_feature_matching_loss, means, log_scales \
-        = reconstruction_loss(targets, output_distribution)
+    feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
@@ -61,9 +60,9 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
                             avg_global_var_prior_losses,
                             step_n=step_n)
     global_var_loss = kldiv_schedule(step_n) * global_variational_prior_loss  # beta
-    total_generator_loss = feature_matching_loss + global_var_loss
+    total_generator_loss = -feature_matching_loss + global_var_loss
+
     scalar = np.log(2.)
-    # True bits/dim kl div
     kl_div = torch.sum(global_variational_prior_losses) / scalar
     return dict(
         elbo=total_generator_loss,
@@ -71,8 +70,6 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
         avg_reconstruction_loss=avg_feature_matching_loss,
         kl_div=kl_div,
         avg_var_prior_losses=avg_global_var_prior_losses,
-        means=means,
-        log_scales=log_scales,
     )
 
 
@@ -236,11 +233,11 @@ def generate(net, logger: logging.Logger):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleBlock)), net.generator.blocks)))
+                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)), net.generator.blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleBlock)), net.generator.blocks))
+            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)), net.generator.blocks))
             temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
@@ -358,9 +355,7 @@ def train(net,
                                 train_outputs, train_inputs, global_norm=global_norm)
                 tensorboard_log(net, optimizer, global_step,
                                 tb_writer_val, val_results,
-                                val_outputs, val_inputs,
-                                means=val_results["means"], log_scales=val_results["log_scales"],
-                                mode='val')
+                                val_outputs, val_inputs, mode='val')
 
             if checkpoint_time or first_step:
                 # Save checkpoint (only if better than best)

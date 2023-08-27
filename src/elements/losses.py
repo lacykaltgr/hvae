@@ -65,23 +65,21 @@ class LogProb(nn.Module):
     def forward(self, targets, distribution: Distribution, global_batch_size=32):
         targets = targets.reshape(distribution.batch_shape)
         log_probs = distribution.log_prob(targets)
-
-        log_probs = torch.flatten(log_probs, start_dim=2)
-        log_p_x = torch.mean(log_probs, dim=0)  # [B, I]
-
+        log_p_x = torch.flatten(log_probs, start_dim=1)
         mean_axis = list(range(1, len(log_p_x.size())))
 
         # loss for batch
-        per_example_loss = torch.sum(log_probs, dim=mean_axis)  # B
-        loss = torch.sum(per_example_loss)
+        per_example_loss = torch.sum(log_p_x, dim=mean_axis)  # B
+        scalar = global_batch_size * np.prod(self.data_shape)
+        loss = torch.sum(per_example_loss) / scalar
 
         # avg loss for image
         avg_per_example_loss = per_example_loss / (
-            np.prod([log_probs.size()[i] for i in mean_axis]))  # B
+            np.prod([log_p_x.size()[i] for i in mean_axis]))  # B
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
 
-        return -loss, -avg_loss, distribution.mean, distribution.stddev
+        return loss, avg_loss
 
 
 class DiscMixLogistic(nn.Module):
@@ -181,7 +179,7 @@ class DiscMixLogistic(nn.Module):
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
 
-        return loss, avg_loss, means, log_scales
+        return loss, avg_loss
 
     def _compute_inv_stdv(self, logits):
         softplus = nn.Softplus(beta=self.gradient_smoothing_beta)
@@ -221,8 +219,7 @@ class BernoulliLoss(nn.Module):
         scalar = global_batch_size * np.prod(self.data_shape)
         loss = torch.sum(per_example_loss) / scalar
         avg_loss = torch.sum(per_example_loss) / global_batch_size
-        model_means, log_scales = None, None
-        return loss, avg_loss, model_means, log_scales
+        return loss, avg_loss
 
 
 class KLDivergence(nn.Module):
@@ -241,7 +238,8 @@ class KLDivergence(nn.Module):
         if self.distribution_base == 'std':
             loss = self.calculate_std_loss(prior.mean, posterior.mean, prior.stddev, prior.stddev)
         elif self.distribution_base == 'logstd':
-            loss = self.calculate_logstd_loss(prior.mean, posterior.mean, prior.stddev, posterior.stddev, self.gradient_smoothing_beta)
+            loss = self.calculate_logstd_loss(prior.mean, posterior.mean, prior.stddev, posterior.stddev,
+                                              self.gradient_smoothing_beta)
         else:
             raise ValueError(f'distribution base {self.distribution_base} not known!!')
 
@@ -256,7 +254,6 @@ class KLDivergence(nn.Module):
         loss = torch.sum(per_example_loss) / scalar
         # divide by ln(2) to convert to KL rate (average space bits/dim)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
-
         return loss, avg_loss
 
     @staticmethod

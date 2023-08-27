@@ -5,6 +5,7 @@ import pickle
 from src.elements.dataset import _DataSet
 import os
 
+
 class TexturesDataset(_DataSet):
     def __init__(self, type="natural", image_size=20, whitening="new"):
         self.type = type
@@ -66,7 +67,6 @@ def load_natural_ds(image_size=20):
     #val_labels = data["train_labels"][train_val_split:]
     test_images = data["test_images"]
     #test_labels = data["test_labels"]
-    print(min(train_images[0]))
     return train_images, val_images, test_images
 
 

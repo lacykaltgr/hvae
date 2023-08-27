@@ -13,8 +13,20 @@ def main():
     checkpoint, checkpoint_path = load_experiment_for('train')
     logger = setup_logger(checkpoint_path)
 
-    model = p.model_params.model()
-    gloabal_step = checkpoint.global_step if checkpoint is not None else -1
+    if checkpoint is not None:
+        gloabal_step = checkpoint.global_step
+        model = checkpoint.get_model()
+        logger.info(f'Loaded Model Checkpoint from {p.log_params.load_from_train}')
+    else:
+        gloabal_step = -1
+        model = p.model_params.model()
+
+    with torch.no_grad():
+        _ = model(torch.ones((1, *p.data_params.shape)))
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    logger.info('Train step generator trainable params {:.3f}m.'.format(
+        np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))
+    model = model.to(p.model_params.device)
 
     optimizer = get_optimizer(model=model,
                               type=p.optimizer_params.type,
@@ -34,25 +46,12 @@ def main():
                             last_epoch=torch.tensor(gloabal_step),
                             checkpoint=checkpoint)
 
-    with torch.no_grad():
-        _ = model(torch.ones((1, *p.data_params.shape)))
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    logger.info('Train step generator trainable params {:.3f}m.'.format(
-        np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))
-    if checkpoint is not None:
-        model = checkpoint.get_model()
-        logger.info('Loaded Model Checkpoint')
-    model = model.to(p.model_params.device)
-
     dataset = p.data_params.dataset
     train_loader = dataset.get_train_loader()
     val_loader = dataset.get_val_loader()
 
     writer_train = create_tb_writer_for('train', checkpoint_path=checkpoint_path)
     writer_val = create_tb_writer_for('val', checkpoint_path=checkpoint_path)
-
-    if checkpoint is not None:
-        del checkpoint
 
     train(model, optimizer, schedule, train_loader, val_loader, gloabal_step,
           writer_train, writer_val, checkpoint_path, logger)

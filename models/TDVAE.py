@@ -1,6 +1,7 @@
 def _model():
-    from src.block import EncBlock, GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae import hVAE as hvae
+    from src.elements.layers import Flatten, Unflatten
 
     _blocks = dict(
         x=InputBlock(
@@ -68,12 +69,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-23__14-04/checkpoints/checkpoint-0.pth',
+    load_from_eval='2023-08-27__22-46/checkpoints/checkpoint-150.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-23__14-04/checkpoints/checkpoint-0.pth',
+    load_from_synthesis='2023-08-27__22-46/checkpoints/checkpoint-150.pth',
 )
 
 """
@@ -251,7 +252,7 @@ SYNTHESIS HYPERPARAMETERS
 """
 synthesis_params = Hyperparams(
     # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats')
-    synthesis_mode='reconstruction',
+    synthesis_mode='div_stats',
 
     # inference batch size (all modes)
     # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
@@ -412,47 +413,3 @@ z_to_x_net = Hyperparams(
     activation=torch.nn.ReLU(),
     residual=False
 )
-
-"""
---------------------
-CUSTOM MODULES
---------------------
-"""
-from src.utils import SerializableModule
-
-
-class Flatten(torch.nn.Flatten, SerializableModule):
-    def __init__(self, start_dim=1, end_dim=-1):
-        super(Flatten, self).__init__(start_dim=start_dim, end_dim=end_dim)
-
-    def serialize(self):
-        serialized = super().serialize()
-        serialized["params"] = dict(
-            start_dim=self.start_dim,
-            end_dim=self.end_dim
-        )
-        return serialized
-
-    @staticmethod
-    def deserialize(serialized):
-        return Flatten(**serialized["params"])
-
-
-class Unflatten(torch.nn.Unflatten, SerializableModule):
-    def __init__(self, dim, unflattened_size):
-        super(Unflatten, self).__init__(dim, unflattened_size)
-        self.unflattened_size = unflattened_size
-        self.dim = dim
-
-    def serialize(self):
-        serialized = super().serialize()
-        serialized["params"] = dict(
-            dim=self.dim,
-            unflattened_size=self.unflattened_size
-        )
-        return serialized
-
-    @staticmethod
-    def deserialize(serialized):
-        return Unflatten(**serialized["params"])
-

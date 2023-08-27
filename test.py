@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from hparams import get_hparams
-from src.utils import load_experiment_for, setup_logger
+from src.utils import load_experiment_for
 from src.model import evaluate
 
 
@@ -12,11 +12,10 @@ def main():
 
     assert checkpoint is not None
     model = checkpoint.get_model()
-    print('Model Checkpoint is loaded')
+    print(f'Model Checkpoint is loaded from {p.log_params.load_from_eval}')
 
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
-
     model = model.to(p.model_params.device)
 
     dataset = p.data_params.dataset

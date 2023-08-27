@@ -45,3 +45,6 @@ class Hyperparams:
     def keys(self):
         return self.config.keys()
 
+    def __getitem__(self, item):
+        return self.config[item]
+

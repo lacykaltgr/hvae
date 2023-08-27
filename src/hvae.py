@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch import tensor
 
-from src.block import TopGenBlock, GenBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, SimpleGenBlock
+from src.block import GenBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, TopGenBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
@@ -50,7 +50,7 @@ class Generator(nn.Module):
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
             for i, block in enumerate(self.blocks):
-                if isinstance(block, GenBlock):
+                if not isinstance(block, SimpleBlock):
                     computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
                 else:
                     computed = block(computed)
@@ -61,28 +61,25 @@ class hVAE(nn.Module):
     def __init__(self, blocks: dict):
         super(hVAE, self).__init__()
 
-        self.input_block, output = next(((output, block) for output, block in blocks.items()
+        self.input_block, output = next(((block, output) for output, block in blocks.items()
                                          if isinstance(block, InputBlock)), None)
         self.input_block.set_output(output)
         encoder_blocks = nn.ModuleList()
         generator_blocks = nn.ModuleList()
-        self.output_block, output = next(((output, block) for output, block in blocks.items()
+        self.output_block, output = next(((block, output) for output, block in blocks.items()
                                           if isinstance(block, OutputBlock)), None)
         self.output_block.set_output(output)
 
-        output = self.input_block.output
         in_generator = False
-        while output != self.output_block.input:
-            if output not in blocks.keys():
-                raise ValueError(f"Block {output} not found")
-            block = blocks[output]
-            if not isinstance(block, (SimpleBlock, ConcatBlock)):
+        for output, block in blocks.items():
+            block.set_output(output)
+            if isinstance(block, TopGenBlock):
                 in_generator = True
-            if in_generator:
-                generator_blocks.append(block)
-            else:
-                encoder_blocks.append(block)
-            output = block.output
+            if not isinstance(block, (InputBlock, OutputBlock)):
+                if in_generator:
+                    generator_blocks.append(block)
+                else:
+                    encoder_blocks.append(block)
 
         self.encoder: Encoder = Encoder(encoder_blocks)
         self.generator: Generator = Generator(generator_blocks)
@@ -194,3 +191,9 @@ class hVAE(nn.Module):
         for block in serialized_blocks:
             blocks[block["output"]] = block["type"].deserialize(block)
         return hVAE(blocks)
+
+    @staticmethod
+    def load(path):
+        from checkpoint import Checkpoint
+        checkpoint = Checkpoint.load(path)
+        return checkpoint.get_model()
