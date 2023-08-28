@@ -2,7 +2,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.TDVAE as params
+    import migration.TDVAE_migration.TDVAE_migrate as params
 
     return Hyperparams(
         log_params=params.log_params,

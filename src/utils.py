@@ -104,6 +104,12 @@ def get_save_load_paths(mode='train'):
         os.makedirs(save_dir, exist_ok=True)
         return load_from_file, save_dir
 
+    elif mode == 'migration':
+        import datetime
+        save_dir = os.path.join(f"{p.dir}{p.name}/migration", f"{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}", )
+        os.makedirs(save_dir, exist_ok=True)
+        return None, save_dir
+
     else:
         raise ValueError(f"Unknown mode {mode}")
 
