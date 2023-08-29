@@ -7,26 +7,26 @@ from checkpoint import Checkpoint
 
 
 # Migration Agent
-from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent as MIGRATION_AGENT
+from migration.EfficientVDVAE_migration.migration_agent import EfficientVDVAEMigrationAgent as MIGRATION_AGENT
 
 
 def main():
     _, save_path = load_experiment_for('migration')
     p = get_hparams()
 
-    migration = MIGRATION_AGENT("migration/TDVAE_migration/weigths/mycurl-33750000")
+    migration = MIGRATION_AGENT()
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()
 
     #with torch.no_grad():
-    #    _ = model(torch.ones((1, *p.data_params.shape)))
-    print(model.summary())
+    #    _ = model(torch.ones((1, 1, 40, 40)))
+    #print(model.summary())
 
     optimizer = get_optimizer(model=model,
                               type=p.optimizer_params.type,
                               learning_rate=p.optimizer_params.learning_rate,
-                              beta_1=migration.beta1_power,
-                              beta_2=migration.beta2_power,
+                              beta_1=0.99,
+                              beta_2=0.9,
                               epsilon=p.optimizer_params.epsilon,
                               weight_decay_rate=p.optimizer_params.l2_weight,
                               checkpoint=None)
@@ -37,8 +37,12 @@ def main():
                             decay_rate=p.optimizer_params.decay_rate,
                             decay_start=p.optimizer_params.decay_start,
                             min_lr=p.optimizer_params.min_learning_rate,
-                            last_epoch=torch.tensor(global_step),
+                            last_epoch=torch.tensor(-1),
                             checkpoint=None)
+
+    print(optimizer.state_dict()["state"])
+    print(schedule.state_dict())
+    exit()
 
     optimizer = migration.get_optimizer(optimizer)
     schedule = migration.get_schedule(schedule)
@@ -51,4 +55,7 @@ def main():
     )
     checkpoint.save(save_path)
 
+
+if __name__ == '__main__':
+    main()
 

@@ -167,11 +167,12 @@ class ConstantLearningRate(LRScheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        return [v * (torch.minimum(torch.tensor(1.), self.last_epoch / self.warmup_steps)) for v in self.base_lrs]
+        return [v * (torch.minimum(torch.tensor(1.), self.last_epoch / self.warmup_steps))
+                for v in self.base_lrs]
 
     def _get_closed_form_lr(self):
-        return [v * (torch.minimum(torch.tensor(1.), torch.tensor(self.last_epoch / self.warmup_steps))) for v in
-                self.base_lrs]
+        return [v * (torch.minimum(torch.tensor(1.), torch.tensor(self.last_epoch / self.warmup_steps)))
+                for v in self.base_lrs]
 
 
 class NarrowExponentialDecay(LRScheduler):

@@ -1,41 +1,40 @@
 def _model(migration):
-    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ResidualGenBlock
     from src.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten
 
-    _blocks = dict(
-        x=InputBlock(
-            net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
-        ),
-        hiddens=SimpleBlock(
-            net=migration['mlp_shared_encoder'],
-            input_id="x"
-        ),
-        y=TopGenBlock(
-            net=migration['mlp_cluster_encoder'],
-            prior_shape=(500, ),
-            prior_trainable=False,
-            concat_prior=False,
-            condition="hiddens",
-            output_distribution="laplace"
-        ),
-        y_concat=SimpleBlock(
-            net=migration['mlp_latent_encoder_y_to_concat'],
-            input_id="y",
-        ),
-        z=GenBlock(
-            prior_net=migration['mlp_latent_decoder'],
-            posterior_net=migration["mlp_latent_encoder_concat_to_z"],
-            input_id="y_concat",
-            condition="hiddens",
-            output_distribution="normal"
-        ),
-        x_hat=OutputBlock(
-            net=[migration["mlp_data_decoder"], Unflatten(1, (2, *data_params.shape))],
-            input_id="z",
-            output_distribution="normal"
-        ),
-    )
+    _blocks = dict()
+    _blocks.update({'x': InputBlock(
+                        net=migration.input_conv,
+    )})
+
+    for i in range(len(migration.levels_up_downsample)):
+        _blocks.update({f'level_up_{j}':
+                        SimpleBlock(
+                            net=migration.levels_up[i],
+                            input_id=f'level_up_downsample_{j-1}' if i > 0 else 'x'
+                        ) for j in range(migration.n_downsample_ratio)}
+        )
+        _blocks.update({f'level_up_downsample_{i}':
+                        SimpleBlock(
+                            net=migration.levels_up_downsample[i],
+                            input_id=f'level_up_{i}' if i > 0 else 'x'
+                        )}
+        )
+
+    _blocks.update({'top': TopGenBlock(
+                        net=migration.top,
+                        prior_shape=(500, ),
+
+    ))
+
+    for i in range(len(migration.levels_up_downsample)):
+        _blocks.update({f'level_down_{j}':ResidualGenBlock() for j in range(len(migration.levels_down))})
+        _blocks.update({f'level_down_upsample_{i}':ResidualGenBlock()})
+
+
+    _blocks.update({'x_hat': OutputBlock(net=migration.input_conv,)})
+
 
     __model = hvae(
         blocks=_blocks,

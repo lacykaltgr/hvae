@@ -209,17 +209,21 @@ class GenBlock(SimpleGenBlock):
     def __init__(self,
                  prior_net,
                  posterior_net,
+                 input_transform,
                  input_id: str, condition: str,
                  output_distribution: str = 'normal'):
         super(GenBlock, self).__init__(prior_net, input_id, output_distribution)
         self.prior_net: Sequential = get_net(prior_net)
         self.posterior_net: Sequential = get_net(posterior_net)
+        self.input_transform: Sequential = get_net(input_transform)
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
+        if self.input_transform is not None:
+            y = self.input_transform(y)
         y_posterior = self.posterior_net(torch.cat([y, cond], dim=1))
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
@@ -272,6 +276,7 @@ class GenBlock(SimpleGenBlock):
         serialized = super().serialize()
         serialized["prior_net"] = self.prior_net.serialize()
         serialized["posterior_net"] = self.posterior_net.serialize()
+        serialized["input_transform"] = self.input_transform.serialize()
         serialized["condition"] = self.condition
         serialized["output_distribution"] = self.output_distribution
         return serialized
@@ -280,9 +285,11 @@ class GenBlock(SimpleGenBlock):
     def deserialize(serialized: dict):
         prior_net = Sequential.deserialize(serialized["prior_net"])
         posterior_net = Sequential.deserialize(serialized["posterior_net"])
+        input_transform = Sequential.deserialize(serialized["input_transform"])
         return GenBlock(
             prior_net=prior_net,
             posterior_net=posterior_net,
+            input_transform=input_transform,
             input_id=serialized["input"],
             condition=serialized["condition"],
             output_distribution=serialized["output_distribution"]
@@ -302,7 +309,7 @@ class TopGenBlock(GenBlock):
                  condition: str,
                  output_distribution: str = 'normal',
                  prior_data=None):
-        super(TopGenBlock, self).__init__(None, net, 'trainable_h', condition, output_distribution)
+        super(TopGenBlock, self).__init__(None, net, None, 'trainable_h', condition, output_distribution)
         self.concat_prior = concat_prior
         self.prior_shape = prior_shape
         self.prior_trainable = prior_trainable
