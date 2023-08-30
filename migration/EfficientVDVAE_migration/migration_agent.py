@@ -5,16 +5,12 @@ import numpy as np
 import torch
 from .read_hparams.hparams import HParams
 from src.utils import SerializableSequential as Sequential
-from src.elements.nets import MLPNet, ConvNet
+from src.elements.nets import ConvNet
 from src.elements.layers import PoolLayer, UnpooLayer
-from checkpoint import Checkpoint
 
 
 class EfficientVDVAEMigrationAgent:
-    def __init__(self,
-                 path="migration/EfficientVDVAE_migration/weights_imagenet/",
-                 weights_filename="checkpoints-imagenet32_baseline",
-                 config_filename="hparams-imagenet32_baseline"):
+    def __init__(self, path, weights_filename, config_filename):
 
         self.hparams = HParams(path,
                                hparams_filename=config_filename,
@@ -35,10 +31,6 @@ class EfficientVDVAEMigrationAgent:
         #return
 
 
-        global_step = checkpoint['global_step']
-        optimizer_state = checkpoint['optimizer_state_dict']
-        scheduler_state = checkpoint['scheduler_state_dict']
-
         levels_up_i = 0
         for level in levels_up:
             for net in level.modules():
@@ -57,16 +49,43 @@ class EfficientVDVAEMigrationAgent:
         levels_down_i = 0
         for level in levels_down:
             for step in level:
-                for net_name, net in step:
+                for net_name, net in step.items():
                     for layer, weight_dict in zip(net.modules(), levels_down_weights[levels_down_i][net_name]):
                         layer.weight.copy_(torch.tensor(weight_dict['w']).T)
                         layer.bias.copy_(torch.tensor(weight_dict['b']))
-                levels_down_i += 1
+                    levels_down_i += 1
 
+        levels_down_upsample_i = 0
+        for level in levels_down_upsample:
+            for net_name, net in level.items():
+                for layer, weight_dict in zip(net.modules(), levels_down_upsample_weights[levels_down_upsample_i][net_name]):
+                    layer.weight.copy_(torch.tensor(weight_dict['w']).T)
+                    layer.bias.copy_(torch.tensor(weight_dict['b']))
+                levels_down_upsample_i += 1
 
+        for net, weight_dict in zip(skip_projections.modules(), skip_projections_weights):
+            net.weight.copy_(torch.tensor(weight_dict['w']).T)
+            net.bias.copy_(torch.tensor(weight_dict['b']))
 
+        input_conv.weight.copy_(torch.tensor(input_conv_weights['w']).T)
+        input_conv.bias.copy_(torch.tensor(input_conv_weights['b']))
 
+        output_conv.weight.copy_(torch.tensor(output_conv_weights['w']).T)
+        output_conv.bias.copy_(torch.tensor(output_conv_weights['b']))
 
+        trainable_h.data.copy_(torch.tensor(trainable_h_weights))
+
+        self.levels_up = levels_up
+        self.levels_up_downsample = levels_up_downsample
+        self.input_conv = input_conv
+        self.skip_projections = skip_projections
+        self.levels_down = levels_down
+        self.levels_down_upsample = levels_down_upsample
+        self.output_conv = output_conv
+        self.trainable_h = trainable_h
+        self.global_step = checkpoint['global_step']
+        self.optimizer_state = checkpoint['optimizer_state_dict']
+        self.scheduler_state = checkpoint['scheduler_state_dict']
 
     def __getitem__(self, item):
         pass

@@ -14,7 +14,11 @@ def main():
     _, save_path = load_experiment_for('migration')
     p = get_hparams()
 
-    migration = MIGRATION_AGENT()
+    migration = MIGRATION_AGENT(
+        path="migration/EfficientVDVAE_migration/weights_imagenet/",
+        weights_filename="checkpoints-imagenet32_baseline",
+        config_filename="hparams-imagenet32_baseline"
+    )
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()
 
@@ -39,10 +43,6 @@ def main():
                             min_lr=p.optimizer_params.min_learning_rate,
                             last_epoch=torch.tensor(-1),
                             checkpoint=None)
-
-    print(optimizer.state_dict()["state"])
-    print(schedule.state_dict())
-    exit()
 
     optimizer = migration.get_optimizer(optimizer)
     schedule = migration.get_schedule(schedule)

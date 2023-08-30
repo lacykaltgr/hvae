@@ -1,22 +1,25 @@
 def _model(migration):
-    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ResidualGenBlock
+    from src.block import InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ResidualGenBlock
     from src.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten
 
     _blocks = dict()
     _blocks.update({
         'x': InputBlock(net=migration.input_conv,)
     })
-    for i in range(len(migration.levels_up_downsample)):
-        _blocks.update({f'level_up_{j}':
-                        SimpleBlock(
-                            net=migration.levels_up[i*10+j],
-                            input_id=f'level_up_downsample_{j-1}' if i > 0 else 'x'
-                        ) for j in range(migration.n_downsample_ratio)}
-        )
+    level_up_count = 0
+    for i, (levels_up, level_up_downsample) in enumerate(zip(migration.levels_up, migration.levels_up_downsample)):
+        for level_n, level_up in enumerate(levels_up):
+            _blocks.update({f'level_up_{level_up_count}':
+                            SimpleBlock(
+                                net=level_up,
+                                input_id=f'level_up_downsample_{level_up_count-1}' if level_up_count > 0 else 'x'
+                            )}
+            )
+            level_up_count += 1
+
         _blocks.update({f'level_up_downsample_{i}':
                         SimpleBlock(
-                            net=migration.levels_up_downsample[i],
+                            net=level_up_downsample,
                             input_id=f'level_up_{i}' if i > 0 else 'x'
                         )}
         )
@@ -25,15 +28,22 @@ def _model(migration):
                         net=migration.top,
                         prior_shape=(500, ),
 
-    ))
+    )})
 
-    for i in range(len(migration.levels_up_downsample)):
-        _blocks.update({f'level_down_{j}':ResidualGenBlock() for j in range(len(migration.levels_down))})
-        _blocks.update({f'level_down_upsample_{i}':ResidualGenBlock()})
+    level_down_count = 0
+    for i, (levels_down, level_down_upsample) in enumerate(zip(migration.levels_down, migration.levels_down_upsample)):
+        for level_n, level_down in enumerate(levels_down):
+            _blocks.update({f'level_down_{level_down_count}':
+                            ResidualGenBlock(
 
+                            )}
+            )
+
+        _blocks.update({f'level_down_upsample_{i}':ResidualGenBlock(
+
+        )})
 
     _blocks.update({'x_hat': OutputBlock(net=migration.input_conv,)})
-
 
     __model = hvae(
         blocks=_blocks,
