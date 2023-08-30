@@ -136,7 +136,7 @@ class ConvNet(SerializableModule):
     :param in_filters: int, the number of input filters
     :param bottleneck_ratio: float, the ratio of bottleneck filters to input filters
     :param kernel_size: int or tuple of int, the size of the convolutional kernel
-    :param init_scaler: float, the scaler for the initial weights
+    :param init_scaler: float, the scaler for the initial weights_imagenet
     :param residual: bool, whether to use residual connections
     :param use_1x1: bool, whether to use 1x1 convolutions
     :param pool_strides: int or tuple of int, the strides for the pooling layers

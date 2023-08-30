@@ -4,14 +4,13 @@ def _model(migration):
     from src.elements.layers import Flatten, Unflatten
 
     _blocks = dict()
-    _blocks.update({'x': InputBlock(
-                        net=migration.input_conv,
-    )})
-
+    _blocks.update({
+        'x': InputBlock(net=migration.input_conv,)
+    })
     for i in range(len(migration.levels_up_downsample)):
         _blocks.update({f'level_up_{j}':
                         SimpleBlock(
-                            net=migration.levels_up[i],
+                            net=migration.levels_up[i*10+j],
                             input_id=f'level_up_downsample_{j-1}' if i > 0 else 'x'
                         ) for j in range(migration.n_downsample_ratio)}
         )
@@ -55,7 +54,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE_migrate',
+    name='EfficientVDVAE_migrate',
 
     # TRAIN LOG
     # --------------------
