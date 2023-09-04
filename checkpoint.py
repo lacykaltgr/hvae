@@ -24,7 +24,7 @@ class Checkpoint:
         checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint-{self.global_step}.pth")
         torch.save(self, checkpoint_path)
         params_path = os.path.join(path, "params.txt")
-        if not os.path.isfile(params_path):
+        if not os.path.isfile(params_path) and self.params is not None:
             params_to_file(self.params, params_path)
 
         return checkpoint_path

@@ -2,15 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
+import numpy as np
 
-from src.utils import SerializableModule
+from src.utils import SerializableModule, get_same_padding, get_valid_padding, get_causal_padding
 
 """
 Layers are modifications of the ones used in Efficient-VDVAE paper
 """
 
 
-class Interpolate(nn.Module):
+class Interpolate(SerializableModule):
     def __init__(self, scale):
         super(Interpolate, self).__init__()
         self.scale = scale
@@ -19,8 +20,19 @@ class Interpolate(nn.Module):
         x = F.interpolate(x, scale_factor=self.scale, mode='nearest')
         return x
 
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            scale=self.scale
+        )
+        return serialized
 
-class UnpooLayer(nn.Module):
+    @staticmethod
+    def deserialize(serialized):
+        return Interpolate(**serialized["params"])
+
+
+class UnpooLayer(SerializableModule):
     def __init__(self, in_filters, filters, strides):
         super(UnpooLayer, self).__init__()
         self.scale_bias = None
@@ -36,7 +48,7 @@ class UnpooLayer(nn.Module):
                nn.LeakyReLU(negative_slope=0.1),
                Interpolate(scale=self.strides)]
 
-        self.register_parameter('scale_bias', None)
+        self.scale_bias: nn.Parameter = None
         self.ops = nn.Sequential(*ops)
 
     def reset_parameters(self, inputs):
@@ -50,8 +62,23 @@ class UnpooLayer(nn.Module):
         x = x + self.scale_bias
         return x
 
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            in_filters=self.in_filters,
+            filters=self.filters,
+            strides=self.strides
+        )
+        serialized["scale_bias"] = self.scale_bias
+        return serialized
 
-class PoolLayer(nn.Module):
+    @staticmethod
+    def deserialize(serialized):
+        layer = UnpooLayer(**serialized["params"])
+        layer.scale_bias = serialized["scale_bias"]
+
+
+class PoolLayer(SerializableModule):
     def __init__(self, in_filters, filters, strides):
         super(PoolLayer, self).__init__()
         self.in_filtes = in_filters
@@ -71,6 +98,19 @@ class PoolLayer(nn.Module):
         x = self.ops(x)
         return x
 
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            in_filters=self.in_filters,
+            filters=self.filters,
+            strides=self.strides
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return PoolLayer(**serialized["params"])
+
 
 class Conv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding='same', dilation=1):
@@ -83,14 +123,35 @@ class Conv2d(nn.Conv2d):
 
         self.stride = stride
 
+        self.padding_str = padding.upper()
+        if self.padding_str == 'SAME':
+            self.pad_values = get_same_padding(kernel_size, stride, dilation)
+
+        elif self.padding_str == 'VALID':
+            self.pad_values = get_valid_padding()
+
+        elif self.padding_str == 'CAUSAL':
+            self.pad_values = get_causal_padding(kernel_size, stride, dilation)
+
+        else:
+            raise ValueError
+
+        self.condition = np.sum(self.pad_values) != 0
+
         super().__init__(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            padding=padding,
+            padding=0,
             dilation=dilation
         )
+
+    def forward(self, x):
+        if self.condition:
+            x = F.pad(x, self.pad_values)
+        x = super().forward(x)
+        return x
 
     def reset_parameters(self) -> None:
         init.xavier_uniform_(self.weight)

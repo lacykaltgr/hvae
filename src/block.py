@@ -116,6 +116,54 @@ class InputBlock(SimpleBlock):
         return InputBlock(net=net)
 
 
+class TopSimpleBlock(SimpleBlock):
+    """
+    Top block of the model
+    Constant or trainable prior
+    Posterior is conditioned on the condition
+    """
+    def __init__(self, net,
+                 prior_shape: tuple,
+                 prior_trainable: bool,
+                 prior_data=None):
+        super(TopSimpleBlock, self).__init__(input_id='trainable_h', net=net)
+        self.prior_shape = prior_shape
+        self.prior_trainable = prior_trainable
+
+        if prior_trainable:
+            self.trainable_h = torch.nn.Parameter(  # for unconditional generation
+                data=prior_data if prior_data is not None else
+                torch.empty(size=prior_shape if len(prior_shape) > 1 else (1, *prior_shape)),
+                requires_grad=True)
+            nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
+        else:
+            # constant tensor with 0 values
+            self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False)
+
+    def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
+        x = torch.tile(self.trainable_h, (list(computed.values())[-1].shape[0], 1))
+        z = self.net(x)
+        computed[self.output] = z
+        return computed
+
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["trainable_h"] = self.trainable_h.data
+        serialized["prior_shape"] = self.trainable_h.shape
+        serialized["prior_trainable"] = self.trainable_h.requires_grad
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return TopSimpleBlock(
+            net=net,
+            prior_shape=serialized["prior_shape"],
+            prior_trainable=serialized["prior_trainable"],
+            prior_data=serialized["trainable_h"]
+        )
+
+
 class SimpleGenBlock(_Block):
     """
     Takes an input and samples from a prior distribution

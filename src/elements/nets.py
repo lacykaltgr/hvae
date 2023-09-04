@@ -71,7 +71,7 @@ class MLPNet(SerializableModule):
     :param residual: bool, whether to use residual connections
     :param activation: torch.nn.Module, the activation function to use
     """
-    def __init__(self, input_size, hidden_sizes, output_size, residual=False, activation=nn.ReLU()):
+    def __init__(self, input_size, hidden_sizes, output_size, residual=False, activation=nn.ReLU(), activate_output=True):
         super(MLPNet, self).__init__()
         self.input_size = input_size
         self.hidden_sizes = hidden_sizes
@@ -83,7 +83,7 @@ class MLPNet(SerializableModule):
         sizes = [input_size] + hidden_sizes + [output_size]
         for i in range(len(sizes) - 1):
             layers.append(nn.Linear(sizes[i], sizes[i + 1]))
-            if i < len(sizes) - 2:
+            if i < len(sizes) - 2 or activate_output:
                 layers.append(self.activation)
 
         self.mlp_layers = nn.Sequential(*layers)

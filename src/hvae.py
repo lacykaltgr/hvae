@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch import tensor
 
-from src.block import GenBlock, InputBlock, OutputBlock, ConcatBlock, SimpleBlock, TopGenBlock
+from src.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, TopGenBlock
 from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
@@ -73,7 +73,7 @@ class hVAE(nn.Module):
         in_generator = False
         for output, block in blocks.items():
             block.set_output(output)
-            if isinstance(block, TopGenBlock):
+            if isinstance(block, (TopGenBlock, TopSimpleBlock)):
                 in_generator = True
             if not isinstance(block, (InputBlock, OutputBlock)):
                 if in_generator:

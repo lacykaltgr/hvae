@@ -1,49 +1,105 @@
 def _model(migration):
-    from src.block import InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ResidualGenBlock
+    from src.block import InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, ResidualGenBlock
     from src.hvae import hVAE as hvae
 
     _blocks = dict()
     _blocks.update({
-        'x': InputBlock(net=migration.input_conv,)
+        'x': InputBlock(net=migration.input_conv, )
     })
     level_up_count = 0
+    level_n = -1
+    pool_layer_count = 0
     for i, (levels_up, level_up_downsample) in enumerate(zip(migration.levels_up, migration.levels_up_downsample)):
         for level_n, level_up in enumerate(levels_up):
-            _blocks.update({f'level_up_{level_up_count}':
-                            SimpleBlock(
-                                net=level_up,
-                                input_id=f'level_up_downsample_{level_up_count-1}' if level_up_count > 0 else 'x'
-                            )}
+            _blocks.update({
+                f'level_up_{level_up_count}':
+                    SimpleBlock(
+                        net=level_up,
+                        input_id='x' if i == 0 and level_n == 0 else
+                                 f'level_up_downsample_{i-1}_pool' if level_n == 0 else
+                                 f'level_up_{level_up_count-1}'
+                    ),
+                f'level_up_{level_up_count}_pool':
+                    SimpleBlock(
+                        net=migration.pool_layers[pool_layer_count],
+                        input_id=f'level_up_{level_up_count}'
+                    )}
             )
+            pool_layer_count += 1
             level_up_count += 1
 
-        _blocks.update({f'level_up_downsample_{i}':
-                        SimpleBlock(
-                            net=level_up_downsample,
-                            input_id=f'level_up_{i}' if i > 0 else 'x'
-                        )}
+        _blocks.update({
+            f'level_up_{level_up_count}':
+                SimpleBlock(
+                    net=level_up_downsample,
+                    input_id='x' if i == 0 and level_n == 0 else
+                             f'level_up_{level_up_count}_pool' if level_n != -1 else
+                             f'level_up_downsample_{i-1}_pool'
+                ),
+            f'level_up_{level_up_count}_pool':
+                SimpleBlock(
+                    net=migration.pool_layers[pool_layer_count],
+                    input_id=f'level_up_{level_up_count}'
+                )}
         )
+        level_up_count += 1
+        pool_layer_count += 1
 
-    _blocks.update({'top': TopGenBlock(
-                        net=migration.top,
-                        prior_shape=(500, ),
-
+    _blocks.update({'top': TopSimpleBlock(
+        net=None,
+        prior_shape=(500,),
+        prior_data=migration.trainable_h,
+        prior_trainable=True
     )})
 
     level_down_count = 0
+    unpool_layer_count = -1
     for i, (levels_down, level_down_upsample) in enumerate(zip(migration.levels_down, migration.levels_down_upsample)):
         for level_n, level_down in enumerate(levels_down):
-            _blocks.update({f'level_down_{level_down_count}':
-                            ResidualGenBlock(
-
-                            )}
+            _blocks.update({
+                f'level_down_{level_down_count}_unpool':
+                    SimpleBlock(
+                        net=migration.unpool_layers[unpool_layer_count],
+                        input_id='top' if i == 0 and level_n == 0 else
+                                 f'level_down_{level_down_count}' if level_n != 0 else
+                                 f'level_down_upsample_{i-1}'
+                    ),
+                f'level_down_{level_down_count}':
+                    ResidualGenBlock(
+                        net=level_down["residual_block"],
+                        prior_net=level_down["prior_net"],
+                        posterior_net=level_down["posterior_net"],
+                        z_projection=level_down["z_projection"],
+                        input=f'level_down_{level_down_count}_unpool',
+                        condition=f"level_up_{level_up_count-1}",
+                    ),
+                }
             )
+            level_down_count += 1
+            level_up_count -= 1
+            unpool_layer_count += 1
 
-        _blocks.update({f'level_down_upsample_{i}':ResidualGenBlock(
+        _blocks.update({
+            f'level_down_{level_down_count}_unpool':
+                SimpleBlock(
+                    net=migration.unpool_layers[unpool_layer_count],
+                    input_id=f'level_down_upsample_{level_down_count}'
+                ),
+            f'level_down_{level_down_count}':
+                ResidualGenBlock(
+                    net=level_down_upsample["residual_block"],
+                    prior_net=level_down_upsample["prior_net"],
+                    posterior_net=level_down_upsample["posterior_net"],
+                    z_projection=level_down_upsample["z_projection"],
+                    input=f'level_down_{level_down_count}_unpool',
+                    condition=f"level_up_{level_up_count-1}",
+                )})
+        level_down_count += 1
+        level_up_count -= 1
+        unpool_layer_count += 1
 
-        )})
-
-    _blocks.update({'x_hat': OutputBlock(net=migration.input_conv,)})
+    _blocks.update({
+        'x_hat': OutputBlock(net=migration.output_conv, )})
 
     __model = hvae(
         blocks=_blocks,
@@ -78,7 +134,6 @@ log_params = Hyperparams(
     # EVAL
     # --------------------
     load_from_eval='2023-08-28__11-17/checkpoints/checkpoint-150.pth',
-
 
     # SYNTHESIS
     # --------------------
@@ -119,6 +174,7 @@ DATA HYPERPARAMETERS
 --------------------
 """
 from data.textures.textures import TexturesDataset as dataset
+
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
@@ -184,7 +240,6 @@ optimizer_params = Hyperparams(
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
 
-
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
     clip_gradient_norm=False,
@@ -243,7 +298,7 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    #TODO: implement
+    # TODO: implement
     n_samples_for_validation=5000,
     # validation batch size
     batch_size=128,
@@ -315,6 +370,7 @@ BLOCK HYPERPARAMETERS
 --------------------
 """
 import torch
+
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -356,7 +412,6 @@ unpool_params = Hyperparams(
     strides=2,
 )
 
-
 """
 --------------------
 CUSTOM BLOCK HYPERPARAMETERS
@@ -381,7 +436,7 @@ hiddens_to_y_net = Hyperparams(
     type='mlp',
     input_size=hiddens_size,
     hidden_sizes=[1000, 500],
-    output_size=2*y_size,
+    output_size=2 * y_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
@@ -399,16 +454,16 @@ z_prior_net = Hyperparams(
     type='mlp',
     input_size=hiddens_size,
     hidden_sizes=[2000],
-    output_size=2*z_size,
+    output_size=2 * z_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
 
 z_posterior_net = Hyperparams(
     type='mlp',
-    input_size=2*hiddens_size,
+    input_size=2 * hiddens_size,
     hidden_sizes=[],
-    output_size=2*z_size,
+    output_size=2 * z_size,
     activation=torch.nn.ReLU(),
     residual=False
 )
@@ -417,7 +472,7 @@ z_to_x_net = Hyperparams(
     type='mlp',
     input_size=z_size,
     hidden_sizes=[],
-    output_size=2*x_size,
+    output_size=2 * x_size,
     activation=torch.nn.ReLU(),
     residual=False
 )

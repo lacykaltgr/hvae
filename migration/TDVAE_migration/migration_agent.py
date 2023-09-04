@@ -1,17 +1,16 @@
-import numpy as np
 import tensorflow as tf
 import torch
 from src.elements.nets import MLPNet
-from checkpoint import Checkpoint
 
 
 class TDVAEMigrationAgent:
-    def __init__(self, path):
+    def __init__(self, path, activate_output):
         checkpoint = tf.train.load_checkpoint(path)
         variables = tf.train.list_variables(path)
         modules = dict()
         for v in variables:
             name, shape = v
+            print(name)
             path_list = name.split('/')
             if len(path_list) < 3:
                 if name == 'global_step':
@@ -23,13 +22,18 @@ class TDVAEMigrationAgent:
                 else:
                     raise NotImplementedError(f'Variable {name} not implemented.')
                 continue
+            if path_list[-1] == 'Adam' or path_list[-1] == 'Adam_1':
+                continue
             module_name = path_list[-3]
             module_type = path_list[-3].split('_')[0]
             layer_name = path_list[-2]
             param_type = path_list[-1]
             if module_name not in modules.keys():
-                modules[module_name] = dict()
-            modules[module_name]['type'] = module_type
+                print(module_name)
+                modules[module_name] = dict(
+                    type=module_type,
+                    activate_output=activate_output[module_name]
+                )
             if layer_name not in modules[module_name].keys():
                 modules[module_name][layer_name] = dict()
             modules[module_name][layer_name][param_type] = checkpoint.get_tensor(name)
@@ -46,7 +50,7 @@ class TDVAEMigrationAgent:
         hidden_sizes = []
         output_size = None
         for layer_name, layer in module.items():
-            if layer_name == 'type':
+            if layer_name == 'type' or layer_name == 'activate_output':
                 continue
             for param_type, param in layer.items():
                 if param_type == 'w':
@@ -56,14 +60,14 @@ class TDVAEMigrationAgent:
                         hidden_sizes.append(layer['shape'][0])
                     output_size = layer['shape'][1]
 
-        net = MLPNet(input_size, hidden_sizes, output_size)
+        net = MLPNet(input_size, hidden_sizes, output_size, activation=torch.nn.Softplus(), activate_output=module['activate_output'])
 
         layers = list(filter(lambda value: isinstance(value, dict), module.values()))
         layer_i = 0
         with torch.no_grad():
             for layer in net.mlp_layers.modules():
                 if isinstance(layer, torch.nn.Linear):
-                    layer.weight.copy_(torch.tensor(layers[layer_i]['w']).T)
+                    layer.weight.copy_(torch.tensor(layers[layer_i]['w']).mT)
                     layer.bias.copy_(torch.tensor(layers[layer_i]['b']))
                     layer_i += 1
         return net
@@ -72,10 +76,10 @@ class TDVAEMigrationAgent:
         return self.global_step
 
     def get_optimizer(self, optimizer):
-        return self.optimizer
+        return None
 
     def get_schedule(self, schedule):
-        return self.schedule
+        return None
 
 
 

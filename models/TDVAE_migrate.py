@@ -17,7 +17,7 @@ def _model(migration):
             prior_trainable=False,
             concat_prior=False,
             condition="hiddens",
-            output_distribution="laplace"
+            output_distribution="normal"
         ),
         z=GenBlock(
             prior_net=migration['mlp_latent_decoder'],
@@ -111,7 +111,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 20, "old"),
+    dataset=dataset("natural", 40, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',

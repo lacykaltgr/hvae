@@ -7,7 +7,7 @@ from checkpoint import Checkpoint
 
 
 # Migration Agent
-from migration.EfficientVDVAE_migration.migration_agent import EfficientVDVAEMigrationAgent as MIGRATION_AGENT
+from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent as MIGRATION_AGENT
 
 
 def main():
@@ -15,15 +15,25 @@ def main():
     p = get_hparams()
 
     migration = MIGRATION_AGENT(
-        path="migration/EfficientVDVAE_migration/weights_imagenet/",
-        weights_filename="checkpoints-imagenet32_baseline",
-        config_filename="hparams-imagenet32_baseline"
+        path="migration/TDVAE_migration/weigths/mycurl-33750000",
+        activate_output=dict(
+            mlp_shared_encoder=True,
+            mlp_cluster_encoder=False,
+            mlp_latent_encoder_y_to_concat=True,
+            mlp_latent_encoder_concat_to_z=False,
+            mlp_latent_decoder=False,
+            mlp_data_decoder=False,
+        )
     )
+    """
+    ="checkpoints-imagenet32_baseline",
+    config_filename="hparams-imagenet32_baseline"
+    """
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()
 
-    #with torch.no_grad():
-    #    _ = model(torch.ones((1, 1, 40, 40)))
+    with torch.no_grad():
+        _ = model(torch.ones((1, 1, 40, 40)))
     #print(model.summary())
 
     optimizer = get_optimizer(model=model,
@@ -44,8 +54,8 @@ def main():
                             last_epoch=torch.tensor(-1),
                             checkpoint=None)
 
-    optimizer = migration.get_optimizer(optimizer)
-    schedule = migration.get_schedule(schedule)
+    #optimizer = migration.get_optimizer(optimizer)
+    #schedule = migration.get_schedule(schedule)
 
     checkpoint = Checkpoint(
         global_step=global_step,

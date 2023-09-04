@@ -33,6 +33,40 @@ def one_hot(indices, depth, dim):
     return y_onehot
 
 
+def get_same_padding(kernel_size, strides, dilation_rate, n_dims=2):
+    p_ = []
+    # Reverse order for F.pad
+    for i in range(n_dims - 1, -1, -1):
+        if strides[i] > 1 and dilation_rate[i] > 1:
+            raise ValueError("Can't have the stride and dilation rate over 1")
+        p = (kernel_size[i] - strides[i]) * dilation_rate[i]
+        if p % 2 == 0:
+            p = (p // 2, p // 2)
+        else:
+            p = (int(np.ceil(p / 2)), int(np.floor(p / 2)))
+
+        p_ += p
+
+    return tuple(p_)
+
+
+def get_valid_padding(n_dims=2):
+    p_ = (0,) * 2 * n_dims
+    return p_
+
+
+def get_causal_padding(kernel_size, strides, dilation_rate, n_dims=2):
+    p_ = []
+    for i in range(n_dims - 1, -1, -1):
+        if strides[i] > 1 and dilation_rate[i] > 1:
+            raise ValueError("can't have the stride and dilation over 1")
+        p = (kernel_size[i] - strides[i]) * dilation_rate[i]
+
+        p_ += (p, 0)
+
+    return p_
+
+
 def get_variate_masks(stats):
     p = get_hparams()
     thresh = np.quantile(stats, 1 - p.synthesis_params.variates_masks_quantile)

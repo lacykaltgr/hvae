@@ -19,61 +19,103 @@ class EfficientVDVAEMigrationAgent:
         weights_file = os.path.join(path, weights_filename)
         checkpoint = torch.load(weights_file, map_location=torch.device('cpu'))
 
-        levels_up, levels_up_downsample, input_conv, skip_projections = self.build_bottom_up()
+        print("Checkpoint loaded.")
+
+        levels_up, levels_up_downsample, pool_layers, input_conv, skip_projections = self.build_bottom_up()
         levels_down, levels_down_upsample, output_conv, trainable_h = self.build_top_down()
+        unpool_layers = nn.ModuleList([])
 
-        levels_up_weights, levels_up_downsample_weights, levels_down_weights, \
-            levels_down_upsample_weights, skip_projections_weights, input_conv_weights, \
-            output_conv_weights, trainable_h_weights = self.process_checkpoint(checkpoint['model_state_dict'])
+        print("Built model.")
 
-        #for i in range(len(checkpoint["model_state_dict"].keys())):
+        levels_up_weights, levels_up_downsample_weights, levels_down_weights, levels_down_upsample_weights, \
+            skip_projections_weights, input_conv_weights, output_conv_weights, trainable_h_weights, \
+            pool_weights, unpool_weights = self.process_checkpoint(checkpoint['model_state_dict'])
+
+
+        print("Processed checkpoint, loaded weights.")
+        # for i in range(len(checkpoint["model_state_dict"].keys())):
         #    print(list(checkpoint["model_state_dict"].values())[i].shape)
-        #return
-
-
+        # return
+        """
         levels_up_i = 0
         for level in levels_up:
             for net in level.modules():
-                for layer, weight_dict in zip(net.convs.modules(), levels_up_weights[levels_up_i]):
+                print(len(levels_up_weights))
+                print(len(net))
+                for layer, weight_dict in zip(net.modules(), levels_up_weights[levels_up_i]):
                     layer.weight.copy_(torch.tensor(weight_dict['w']).T)
                     layer.bias.copy_(torch.tensor(weight_dict['b']))
                 levels_up_i += 1
 
+        print("Loaded weights for levels_up.")
+        
+        """
+
         levels_up_downsample_i = 0
-        for net in levels_up_downsample:
-            for layer, weight_dict in zip(net.modules(), levels_up_downsample_weights[levels_up_downsample_i]):
-                layer.weight.copy_(torch.tensor(weight_dict['w']).T)
-                layer.bias.copy_(torch.tensor(weight_dict['b']))
-            levels_up_downsample_i += 1
+        for level in levels_up_downsample:
+            for net in level:
+                for layer, weight_dict in zip(net.convs, levels_up_downsample_weights[levels_up_downsample_i]):
+                    if hasattr(layer, 'weight'):
+                        print(layer.weight.shape)
+                        print(weight_dict['w'].shape)
+                        #self._set_weight_bias(layer, weight_dict)
+                levels_up_downsample_i += 1
+
+        print("Loaded weights for levels_up_downsample.")
 
         levels_down_i = 0
         for level in levels_down:
             for step in level:
                 for net_name, net in step.items():
+                    if net_name == 'unpool':
+                        unpool_layers.extend([net])
+                        continue
                     for layer, weight_dict in zip(net.modules(), levels_down_weights[levels_down_i][net_name]):
-                        layer.weight.copy_(torch.tensor(weight_dict['w']).T)
-                        layer.bias.copy_(torch.tensor(weight_dict['b']))
+                        self._set_weight_bias(layer, weight_dict)
                     levels_down_i += 1
+
+        print("Loaded weights for levels_down.")
 
         levels_down_upsample_i = 0
         for level in levels_down_upsample:
             for net_name, net in level.items():
-                for layer, weight_dict in zip(net.modules(), levels_down_upsample_weights[levels_down_upsample_i][net_name]):
-                    layer.weight.copy_(torch.tensor(weight_dict['w']).T)
-                    layer.bias.copy_(torch.tensor(weight_dict['b']))
+                if net_name == 'unpool':
+                    unpool_layers.extend([net])
+                    continue
+                for layer, weight_dict in zip(net.modules(),
+                                              levels_down_upsample_weights[levels_down_upsample_i][net_name]):
+                    self._set_weight_bias(layer, weight_dict)
                 levels_down_upsample_i += 1
 
+        print("Loaded weights for levels_down_upsample.")
+
         for net, weight_dict in zip(skip_projections.modules(), skip_projections_weights):
-            net.weight.copy_(torch.tensor(weight_dict['w']).T)
-            net.bias.copy_(torch.tensor(weight_dict['b']))
+            self._set_weight_bias(net, weight_dict)
 
-        input_conv.weight.copy_(torch.tensor(input_conv_weights['w']).T)
-        input_conv.bias.copy_(torch.tensor(input_conv_weights['b']))
+        print("Loaded weights for skip_projections.")
 
-        output_conv.weight.copy_(torch.tensor(output_conv_weights['w']).T)
-        output_conv.bias.copy_(torch.tensor(output_conv_weights['b']))
+        self._set_weight_bias(input_conv, input_conv_weights)
+
+        print("Loaded weights for input_conv.")
+
+        self._set_weight_bias(output_conv, output_conv_weights)
+
+        print("Loaded weights for output_conv.")
 
         trainable_h.data.copy_(torch.tensor(trainable_h_weights))
+
+        print("Loaded weights for trainable_h.")
+
+        for layer, weight_dict in zip(pool_layers.modules(), pool_weights):
+            self._set_weight_bias(layer, weight_dict)
+
+        print("Loaded weights for pool_layers.")
+
+        for layer, weight_dict in zip(unpool_layers.modules(), unpool_weights):
+            layer.scale_bias.copy_(torch.tensor(weight_dict['scale_bias']))
+            self._set_weight_bias(layer, weight_dict)
+
+        print("Loaded weights for unpool_layers.")
 
         self.levels_up = levels_up
         self.levels_up_downsample = levels_up_downsample
@@ -81,6 +123,8 @@ class EfficientVDVAEMigrationAgent:
         self.skip_projections = skip_projections
         self.levels_down = levels_down
         self.levels_down_upsample = levels_down_upsample
+        self.pool_layers = pool_layers
+        self.unpool_layers = unpool_layers
         self.output_conv = output_conv
         self.trainable_h = trainable_h
         self.global_step = checkpoint['global_step']
@@ -94,20 +138,28 @@ class EfficientVDVAEMigrationAgent:
         return self.global_step
 
     def get_optimizer(self, optimizer):
-        return optimizer
+        return self.optimizer_state
 
     def get_schedule(self, schedule):
-        return schedule
+        return self.scheduler_state
 
     def _find_net(self, net_name, i, split_element, keys, values):
         in_block = []
         while keys[i].split(".")[split_element] == net_name:
             in_block.append(dict(
                 w=values[i],
-                b=values[i+1])
+                b=values[i + 1])
             )
             i += 2
         return in_block, i
+
+    def _set_weight_bias(self, layer, weight_dict):
+        layer.weight.requires_grad = False
+        layer.bias.requires_grad = False
+        layer.weight.copy_(torch.tensor(weight_dict['w']).mT)
+        layer.bias.copy_(torch.tensor(weight_dict['b']))
+        layer.weight.requires_grad = True
+        layer.bias.requires_grad = True
 
     def process_checkpoint(self, state):
         keys = list(state.keys())
@@ -118,6 +170,8 @@ class EfficientVDVAEMigrationAgent:
         levels_down_weights = []
         levels_down_upsample_weights = []
         skip_projections_weights = []
+        pool_weights = []
+        unpool_weights = []
         input_conv_weights = None
         output_conv_weights = None
         trainable_h_weights = None
@@ -128,6 +182,8 @@ class EfficientVDVAEMigrationAgent:
         i = 0
         while i < len(keys):
             split = keys[i].split(".")  # bottom_up, levels_up_downsample 0, residual_block, 0, convs, 1, weight
+            if 'unpool' in split:
+                print(split)
             if split[0] == "bottom_up":
                 if split[1] == "levels_up_downsample":
 
@@ -137,24 +193,41 @@ class EfficientVDVAEMigrationAgent:
                     elif split[3] == "skip_projection":
                         skip_projections_weights.append(dict(
                             w=values[i],
-                            b=values[i+1]
+                            b=values[i + 1]
                         ))
-                    else: raise NotImplementedError(f'Variable {keys[i]} not implemented.')
+                        i += 2
+                    elif split[3] == "pool":
+                        pool_weights.append(dict(
+                            w=values[i],
+                            b=values[i + 1]
+                        ))
+                        i += 2
+                    else:
+                        raise NotImplementedError(f'Variable {keys[i]} not implemented.')
 
                 elif split[1] == "levels_up":
 
                     if split[3] == "residual_block":
                         net, i = self._find_net("residual_block", i, 3, keys, values)
                         levels_up_weights.append(net)
-                    else:raise NotImplementedError(f'Variable {keys[i]} not implemented.')
+                    elif split[3] == "pool":
+                        pool_weights.append(dict(
+                            w=values[i],
+                            b=values[i + 1]
+                        ))
+                        i += 2
+                    else:
+                        raise NotImplementedError(f'Variable {keys[i]} not implemented.')
 
-                elif split[0] == "input_conv":
+                elif split[1] == "input_conv":
                     input_conv_weights = dict(
                         w=values[i],
-                        b=values[i+1]
+                        b=values[i + 1]
                     )
+                    i += 2
 
-                else:raise NotImplementedError(f'Variable {keys[i]} not implemented.')
+                else:
+                    raise NotImplementedError(f'Variable {keys[i]} not implemented.')
 
             elif split[0] == "top_down":
                 if split[1] == 'levels_down_upsample':
@@ -162,16 +235,15 @@ class EfficientVDVAEMigrationAgent:
                 elif split[1] == 'levels_down':
                     top_down_number = 4
 
-                if split[0] == "trainable_h":
-                    trainable_h_weights = dict(
-                        w=values[i],
-                        b=values[i+1]
-                    )
+                if split[1] == "trainable_h":
+                    trainable_h_weights = values[i]
+                    i += 1
                 elif split[1] == "output_conv":
                     output_conv_weights = dict(
                         w=values[i],
-                        b=values[i+1]
+                        b=values[i + 1]
                     )
+                    i += 2
                 elif split[top_down_number] == 'residual_block':
                     net, i = self._find_net("residual_block", i, top_down_number, keys, values)
                     top_down_block = dict(residual_block=net)
@@ -184,19 +256,19 @@ class EfficientVDVAEMigrationAgent:
                 elif split[top_down_number] == 'prior_layer':
                     top_down_block['prior_layer'] = dict(
                         w=values[i],
-                        b=values[i+1]
+                        b=values[i + 1]
                     )
                     i += 2
                 elif split[top_down_number] == 'posterior_layer':
                     top_down_block['posterior_layer'] = dict(
                         w=values[i],
-                        b=values[i+1]
+                        b=values[i + 1]
                     )
                     i += 2
                 elif split[top_down_number] == 'z_projection':
                     top_down_block['posterior_layer'] = dict(
                         w=values[i],
-                        b=values[i+1]
+                        b=values[i + 1]
                     )
                     i += 2
                     if split[1] == 'levels_down_upsample':
@@ -205,19 +277,29 @@ class EfficientVDVAEMigrationAgent:
                         levels_down_weights.append(top_down_block)
                     else:
                         raise NotImplementedError(f'Variable {keys[i]} not implemented.')
+                elif split[top_down_number] == 'unpool':
+                    unpool_weights.append(dict(
+                        scale_bias=values[i],
+                        w=values[i + 1],
+                        b=values[i + 2]))
+                    i += 3
                 else:
                     raise NotImplementedError(f'Variable {keys[i]} not implemented.')
 
-            else: raise NotImplementedError(f'Variable {keys[i]} not implemented.')
+            else:
+                raise NotImplementedError(f'Variable {keys[i]} not implemented.')
 
-        return levels_up_weights, levels_up_downsample_weights, levels_down_weights, levels_down_upsample_weights, \
-            skip_projections_weights, input_conv_weights, output_conv_weights, trainable_h_weights
+        return levels_up_weights, levels_up_downsample_weights, \
+            levels_down_weights, levels_down_upsample_weights, \
+            skip_projections_weights, input_conv_weights, output_conv_weights, trainable_h_weights, \
+            pool_weights, unpool_weights
 
     def build_bottom_up(self):
         in_channels_up = [self.hparams.model.input_conv_filters] + self.hparams.model.up_filters[0:-1]
 
         levels_up = nn.ModuleList([])
         levels_up_downsample = nn.ModuleList([])
+        pool_layers = nn.ModuleList([])
         skip_projections = nn.ModuleList([])
 
         for i, stride in enumerate(self.hparams.model.up_strides):
@@ -230,7 +312,7 @@ class EfficientVDVAEMigrationAgent:
                     kernel_size=self.hparams.model.up_kernel_size[i],
                     init_scaler=np.sqrt(1. / float(sum(self.hparams.model.down_n_blocks_per_res) +
                                                    len(self.hparams.model.down_strides)))
-                                                    if self.hparams.model.stable_init else 1.,
+                    if self.hparams.model.stable_init else 1.,
                     activation=nn.SiLU(),
                     output_ratio=1.0,
                     residual=True,
@@ -242,26 +324,27 @@ class EfficientVDVAEMigrationAgent:
             levels_up.extend([elements])
 
             levels_up_downsample.extend([Sequential(*[
-                Sequential(*[
-                    ConvNet(
-                        n_layers=self.hparams.model.up_n_layers[i],
-                        in_filters=in_channels_up[i],
-                        bottleneck_ratio=self.hparams.model.up_mid_filters_ratio[i],
-                        kernel_size=self.hparams.model.up_kernel_size[i],
-                        init_scaler=np.sqrt(1. / float(sum(self.hparams.model.down_n_blocks_per_res) +
-                                                       len(self.hparams.model.down_strides)))
-                                                        if self.hparams.model.stable_init else 1.,
-                        use_1x1=self.hparams.model.use_1x1_conv,
-                    ),
-                    PoolLayer(
-                        in_filters=in_channels_up[i],
-                        filters=self.hparams.model.up_filters[i],
-                        strides=stride
-                    )
-                ]) for _ in range(self.hparams.model.up_n_blocks[i])])]),
+                ConvNet(
+                    n_layers=self.hparams.model.up_n_layers[i],
+                    in_filters=in_channels_up[i],
+                    bottleneck_ratio=self.hparams.model.up_mid_filters_ratio[i],
+                    kernel_size=self.hparams.model.up_kernel_size[i],
+                    init_scaler=np.sqrt(1. / float(sum(self.hparams.model.down_n_blocks_per_res) +
+                                                   len(self.hparams.model.down_strides)))
+                    if self.hparams.model.stable_init else 1.,
+                    use_1x1=self.hparams.model.use_1x1_conv,
+                )
+                for _ in range(self.hparams.model.up_n_blocks[i])])])
+
+            pool_layers.extend([PoolLayer(
+                in_filters=in_channels_up[i],
+                filters=self.hparams.model.up_filters[i],
+                strides=stride
+            )])
 
             skip_projections.extend([nn.Conv2d(
-                in_channels=in_channels_up[i], out_channels=self.hparams.model.up_skip_filters[i], kernel_size=(1, 1), stride=(1, 1),
+                in_channels=in_channels_up[i], out_channels=self.hparams.model.up_skip_filters[i], kernel_size=(1, 1),
+                stride=(1, 1),
                 padding='same'
             )])
 
@@ -271,7 +354,7 @@ class EfficientVDVAEMigrationAgent:
                                stride=(1, 1),
                                padding='same')
 
-        return levels_up, levels_up_downsample, input_conv, skip_projections
+        return levels_up, levels_up_downsample, pool_layers, input_conv, skip_projections
 
     def build_top_down(self):
 
@@ -371,11 +454,11 @@ class EfficientVDVAEMigrationAgent:
         ))
 
         prior_projection = nn.Conv2d(
-                in_channels=in_filters,
-                out_channels=latent_variates * 2,
-                kernel_size=(1, 1),
-                stride=(1, 1),
-                padding='same'
+            in_channels=in_filters,
+            out_channels=latent_variates * 2,
+            kernel_size=(1, 1),
+            stride=(1, 1),
+            padding='same'
         )
 
         posterior_projection = nn.Conv2d(
