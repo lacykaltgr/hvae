@@ -181,7 +181,7 @@ def plot_image(outputs, targets, step, writer):
 
 
 def load_experiment_for(mode: str = 'test'):
-    from checkpoint import Checkpoint
+    from src.checkpoint import Checkpoint
     load_from_file, save_to_path = get_save_load_paths(mode)
 
     experiment = None

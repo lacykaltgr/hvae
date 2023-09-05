@@ -4,8 +4,8 @@ import torch
 from torch import nn
 from torch import tensor
 
-from src.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, TopGenBlock
-from src.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
+from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, TopGenBlock
+from src.hvae.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
 class Encoder(nn.Module):
@@ -194,6 +194,6 @@ class hVAE(nn.Module):
 
     @staticmethod
     def load(path):
-        from checkpoint import Checkpoint
+        from src.checkpoint import Checkpoint
         checkpoint = Checkpoint.load(path)
         return checkpoint.get_model()

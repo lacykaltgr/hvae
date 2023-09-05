@@ -3,7 +3,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 
 
 def default_transform():

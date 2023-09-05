@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import tensor, nn, distributions as dist, Size
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 from src.utils import one_hot
 
 

@@ -4,8 +4,8 @@ import logging
 import numpy as np
 import torch
 
-from hparams import get_hparams
-from src.model import compute_per_dimension_divergence_stats, generate, reconstruct
+from src.hparams import get_hparams
+from src.hvae.model import compute_per_dimension_divergence_stats, generate, reconstruct
 from src.utils import write_image_to_disk, setup_logger, load_experiment_for
 
 

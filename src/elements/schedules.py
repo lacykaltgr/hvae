@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 
 
 def get_gamma_schedule():

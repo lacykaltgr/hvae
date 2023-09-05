@@ -1,9 +1,8 @@
-import numpy as np
 import torch
 
 from hparams import get_hparams
-from src.utils import load_experiment_for
-from src.model import evaluate
+from utils import load_experiment_for
+from hvae.model import evaluate
 
 
 def main():

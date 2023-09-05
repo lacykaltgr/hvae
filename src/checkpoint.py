@@ -29,6 +29,12 @@ class Checkpoint:
 
         return checkpoint_path
 
+    def save_migration(self, path):
+        os.makedirs(path, exist_ok=True)
+        checkpoint_path = os.path.join(path, f"migrated_checkpoint.pth")
+        torch.save(self, checkpoint_path)
+        return checkpoint_path
+
     @staticmethod
     def load(path):
         experiment: Checkpoint = torch.load(path)
@@ -46,7 +52,7 @@ class Checkpoint:
                 }
 
     def __setstate__(self, state):
-        from src.hvae import hVAE
+        from src.hvae.hvae import hVAE
 
         self.global_step = state["global_step"]
         self.model =       hVAE.deserialize(state["model"])

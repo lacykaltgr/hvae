@@ -1,6 +1,6 @@
 def _model():
-    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
-    from src.hvae import hVAE as hvae
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten
 
 
@@ -49,7 +49,7 @@ def _model():
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from hparams import Hyperparams
+from src.hparams import Hyperparams
 
 """
 --------------------

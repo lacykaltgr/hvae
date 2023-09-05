@@ -1,6 +1,6 @@
 def _model(migration):
-    from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
-    from src.hvae import hVAE as hvae
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten, FixedStdDev
 
     _blocks = dict(
@@ -46,7 +46,7 @@ def _model(migration):
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from hparams import Hyperparams
+from src.hparams import Hyperparams
 
 """
 --------------------
@@ -68,7 +68,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-05__18-26/checkpoints/checkpoint-0.pth',
+    load_from_eval='migration/2023-09-05__19-28/checkpoints/checkpoint-0.pth',
 
 
     # SYNTHESIS
@@ -354,61 +354,4 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_size = torch.prod(torch.tensor(data_params.shape))
-z_size = 1800
-hiddens_size = 2000
-y_size = 250
 
-x_to_hiddens_net = Hyperparams(
-    type='mlp',
-    input_size=x_size,
-    hidden_sizes=[],
-    output_size=hiddens_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-hiddens_to_y_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[1000, 500],
-    output_size=2*y_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-y_to_concat_net = Hyperparams(
-    type='mlp',
-    input_size=y_size,
-    hidden_sizes=[500, 1000],
-    output_size=hiddens_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_prior_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[2000],
-    output_size=2*z_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_posterior_net = Hyperparams(
-    type='mlp',
-    input_size=2*hiddens_size,
-    hidden_sizes=[],
-    output_size=2*z_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_to_x_net = Hyperparams(
-    type='mlp',
-    input_size=z_size,
-    hidden_sizes=[],
-    output_size=2*x_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)

@@ -1,11 +1,11 @@
 import numpy as np
 import torch
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 from src.elements.optimizers import get_optimizer
 from src.elements.schedules import get_schedule
 from src.utils import load_experiment_for, create_tb_writer_for, setup_logger
-from src.model import train
+from src.hvae.model import train
 
 
 def main():

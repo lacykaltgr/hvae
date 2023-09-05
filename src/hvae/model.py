@@ -9,12 +9,11 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.block import GenBlock, TopGenBlock, OutputBlock, SimpleBlock, SimpleGenBlock
-from checkpoint import Checkpoint
-from hparams import get_hparams
+from src.hvae.block import GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock
+from src.checkpoint import Checkpoint
+from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
-
 from src.utils import tensorboard_log, get_variate_masks, write_image_to_disk, linear_temperature, \
     prepare_for_log, print_line
 
@@ -52,7 +51,6 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
     distributions_for_kl = list(filter(lambda x: x[1] is not None, distributions))
     for prior, posterior in distributions_for_kl:
         loss, avg_loss = kl_divergence(prior, posterior)
-        print(loss)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
     global_variational_prior_losses = torch.stack(global_variational_prior_losses)

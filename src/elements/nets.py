@@ -1,5 +1,5 @@
 from src.elements.layers import *
-from hparams import get_hparams, Hyperparams
+from src.hparams import get_hparams, Hyperparams
 from src.utils import SerializableModule, SerializableSequential as Sequential
 
 

@@ -1,6 +1,6 @@
 def _model(migration):
-    from src.block import InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, ResidualGenBlock
-    from src.hvae import hVAE as hvae
+    from src.hvae.block import InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, ResidualGenBlock
+    from src.hvae.hvae import hVAE as hvae
 
     _blocks = dict()
     _blocks.update({
@@ -111,7 +111,7 @@ def _model(migration):
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from hparams import Hyperparams
+from src.hparams import Hyperparams
 
 """
 --------------------
@@ -124,12 +124,14 @@ log_params = Hyperparams(
 
     # TRAIN LOG
     # --------------------
-    load_from_train=None,
-    dir_naming_scheme='timestamp',
-
     # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
+
+
+    load_from_train=None,
+    dir_naming_scheme='timestamp',
+
 
     # EVAL
     # --------------------

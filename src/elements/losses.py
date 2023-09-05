@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.distribution import Distribution
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 from ..utils import scale_pixels
 
 

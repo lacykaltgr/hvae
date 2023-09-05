@@ -137,10 +137,10 @@ class EfficientVDVAEMigrationAgent:
     def get_global_step(self):
         return self.global_step
 
-    def get_optimizer(self, optimizer):
+    def get_optimizer(self):
         return self.optimizer_state
 
-    def get_schedule(self, schedule):
+    def get_schedule(self):
         return self.scheduler_state
 
     def _find_net(self, net_name, i, split_element, keys, values):

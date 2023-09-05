@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import torch
 from src.elements.data_preprocessing import default_transform
 from torch.utils.data import Dataset as TorchDataset
-from hparams import get_hparams
+from src.hparams import get_hparams
 
 
 class _DataSet(ABC):

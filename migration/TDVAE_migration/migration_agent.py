@@ -70,10 +70,10 @@ class TDVAEMigrationAgent:
     def get_global_step(self):
         return self.global_step
 
-    def get_optimizer(self, optimizer):
+    def get_optimizer(self):
         return None
 
-    def get_schedule(self, schedule):
+    def get_schedule(self):
         return None
 
 
