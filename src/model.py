@@ -24,7 +24,7 @@ kldiv_schedule = get_beta_schedule()
 gamma_schedule = get_gamma_schedule()
 reconstruction_loss = get_reconstruction_loss()
 kl_divergence = get_kl_loss()
-ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.shape[-1])
+ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.shape[0])
 
 
 def compute_loss(targets: tensor, distributions: list, logits: tensor = None, step_n: int = 0) -> dict:
@@ -43,6 +43,7 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
         return prms.loss_params.custom_loss(targets=targets, predictions=logits,
                                             distributions=distributions, step_n=step_n)
 
+
     output_distribution = distributions[-1][0]
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
@@ -51,6 +52,7 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
     distributions_for_kl = list(filter(lambda x: x[1] is not None, distributions))
     for prior, posterior in distributions_for_kl:
         loss, avg_loss = kl_divergence(prior, posterior)
+        print(loss)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
     global_variational_prior_losses = torch.stack(global_variational_prior_losses)

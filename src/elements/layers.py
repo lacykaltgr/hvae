@@ -112,6 +112,26 @@ class PoolLayer(SerializableModule):
         return PoolLayer(**serialized["params"])
 
 
+class FixedStdDev(SerializableModule):
+    def __init__(self, std):
+        super(FixedStdDev, self).__init__()
+        self.std = std
+
+    def forward(self, x):
+        return torch.concatenate([x, self.std * torch.ones_like(x)], dim=1)
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            std=self.std
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return FixedStdDev(**serialized["params"])
+
+
 class Conv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding='same', dilation=1):
         if isinstance(kernel_size, int):

@@ -6,6 +6,9 @@ from hparams import get_hparams
 from src.utils import one_hot
 
 
+dist.distribution.Distribution.set_default_validate_args(False)
+
+
 def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 'normal',
                           sigma_nonlin: str = None, sigma_param: str = None) -> dist.Distribution:
     """

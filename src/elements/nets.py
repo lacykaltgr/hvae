@@ -78,12 +78,13 @@ class MLPNet(SerializableModule):
         self.output_size = output_size
         self.activation = activation
         self.residual = residual
+        self.activate_output = activate_output
 
         layers = []
         sizes = [input_size] + hidden_sizes + [output_size]
         for i in range(len(sizes) - 1):
             layers.append(nn.Linear(sizes[i], sizes[i + 1]))
-            if i < len(sizes) - 2 or activate_output:
+            if i < len(sizes) - 2 or self.activate_output:
                 layers.append(self.activation)
 
         self.mlp_layers = nn.Sequential(*layers)
@@ -91,10 +92,7 @@ class MLPNet(SerializableModule):
     def forward(self, inputs):
         x = inputs
         x = self.mlp_layers(x)
-        if self.residual:
-            outputs = inputs + x
-        else:
-            outputs = x
+        outputs = x if not self.residual else inputs + x
         return outputs
 
     @staticmethod
@@ -104,7 +102,8 @@ class MLPNet(SerializableModule):
             hidden_sizes=hparams.hidden_sizes,
             output_size=hparams.output_size,
             activation=hparams.activation,
-            residual=hparams.residual
+            residual=hparams.residual,
+            activate_output=hparams.activate_output
         )
 
     def serialize(self):
@@ -116,7 +115,8 @@ class MLPNet(SerializableModule):
                 hidden_sizes=self.hidden_sizes,
                 output_size=self.output_size,
                 activation=self.activation,
-                residual=self.residual
+                residual=self.residual,
+                activate_output=self.activate_output
             )
         )
 

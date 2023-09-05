@@ -4,13 +4,12 @@ from src.elements.nets import MLPNet
 
 
 class TDVAEMigrationAgent:
-    def __init__(self, path, activate_output):
+    def __init__(self, path):
         checkpoint = tf.train.load_checkpoint(path)
         variables = tf.train.list_variables(path)
         modules = dict()
         for v in variables:
             name, shape = v
-            print(name)
             path_list = name.split('/')
             if len(path_list) < 3:
                 if name == 'global_step':
@@ -29,19 +28,15 @@ class TDVAEMigrationAgent:
             layer_name = path_list[-2]
             param_type = path_list[-1]
             if module_name not in modules.keys():
-                print(module_name)
-                modules[module_name] = dict(
-                    type=module_type,
-                    activate_output=activate_output[module_name]
-                )
+                modules[module_name] = dict(type=module_type)
             if layer_name not in modules[module_name].keys():
                 modules[module_name][layer_name] = dict()
             modules[module_name][layer_name][param_type] = checkpoint.get_tensor(name)
             modules[module_name][layer_name]['shape'] = shape
         self.modules = modules
 
-    def __getitem__(self, item):
-        module = self.modules[item]
+    def get_net(self, net_name, activate_output):
+        module = self.modules[net_name]
 
         if module['type'] != 'mlp':
             raise NotImplementedError(f'Module type {module["type"]} not implemented.')
@@ -50,7 +45,7 @@ class TDVAEMigrationAgent:
         hidden_sizes = []
         output_size = None
         for layer_name, layer in module.items():
-            if layer_name == 'type' or layer_name == 'activate_output':
+            if layer_name == 'type':
                 continue
             for param_type, param in layer.items():
                 if param_type == 'w':
@@ -60,7 +55,7 @@ class TDVAEMigrationAgent:
                         hidden_sizes.append(layer['shape'][0])
                     output_size = layer['shape'][1]
 
-        net = MLPNet(input_size, hidden_sizes, output_size, activation=torch.nn.Softplus(), activate_output=module['activate_output'])
+        net = MLPNet(input_size, hidden_sizes, output_size, activation=torch.nn.Softplus(), activate_output=activate_output)
 
         layers = list(filter(lambda value: isinstance(value, dict), module.values()))
         layer_i = 0

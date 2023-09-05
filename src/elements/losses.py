@@ -40,11 +40,7 @@ def get_kl_loss():
     """
     params = get_hparams()
     if params.loss_params.kldiv_loss == 'default':
-        return KLDivergence(
-            distribution_base=params.model_params.distribution_base,
-            gradient_smoothing_beta=params.model_params.gradient_smoothing_beta,
-            data_shape=params.data_params.shape,
-        )
+        return KLDivergence(data_shape=params.data_params.shape)
     else:
         raise ValueError(f'Unknown kl loss: {params.loss_params.kldiv_loss}')
 
@@ -228,20 +224,12 @@ class KLDivergence(nn.Module):
     from Efficient-VDVAE paper
     """
 
-    def __init__(self, distribution_base, gradient_smoothing_beta, data_shape):
+    def __init__(self, data_shape):
         super(KLDivergence, self).__init__()
-        self.distribution_base = distribution_base
-        self.gradient_smoothing_beta = gradient_smoothing_beta
         self.data_shape = data_shape
 
     def forward(self, prior: Distribution, posterior: Distribution, global_batch_size=32):
-        if self.distribution_base == 'std':
-            loss = self.calculate_std_loss(prior.mean, posterior.mean, prior.stddev, prior.stddev)
-        elif self.distribution_base == 'logstd':
-            loss = self.calculate_logstd_loss(prior.mean, posterior.mean, prior.stddev, posterior.stddev,
-                                              self.gradient_smoothing_beta)
-        else:
-            raise ValueError(f'distribution base {self.distribution_base} not known!!')
+        loss = self.calculate_std_loss(prior.mean, posterior.mean, prior.stddev, prior.stddev)
 
         mean_axis = list(range(1, len(loss.size())))
         per_example_loss = torch.sum(loss, dim=mean_axis)
@@ -263,20 +251,6 @@ class KLDivergence(nn.Module):
         term2 = p_sigma / q_sigma
         loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
         loss = torch.nan_to_num(loss, nan=0.0)
-        return loss
-
-    @staticmethod
-    @torch.jit.script
-    def calculate_logstd_loss(p_mu, q_mu, p_sigma, q_sigma, gradient_smoothing_beta: float = 1.0):
-        q_logstd = q_sigma
-        p_logstd = p_sigma
-
-        p_std = torch.exp(gradient_smoothing_beta * p_logstd)
-        inv_q_std = torch.exp(gradient_smoothing_beta * q_logstd)
-
-        term1 = (p_mu - q_mu) * inv_q_std
-        term2 = p_std * inv_q_std
-        loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
         return loss
 
 
@@ -314,10 +288,13 @@ class SSIM(nn.Module):
 
     def _apply_filter(self, x):
         shape = list(x.size())
-        x = torch.reshape(x, shape=[-1] + shape[-3:])  # b , c , h , w
+        if len(shape) == 3:
+            x = torch.unsqueeze(x, dim=1)
+        elif len(shape) == 4:
+            x = torch.reshape(x, shape=[-1] + shape[-3:])  # b , c , h , w
         y = F.conv2d(x, weight=self.kernel, stride=1, padding=(self.filter_size - 1) // 2,
                      groups=x.shape[1])  # b, c, h, w
-        return torch.reshape(y, shape[:-3] + list(y.size()[1:]))
+        return y
 
     def _compute_luminance_contrast_structure(self, x, y):
         c1 = (self.k1 * self.max_val) ** 2

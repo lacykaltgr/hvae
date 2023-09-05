@@ -1,34 +1,36 @@
 def _model(migration):
     from src.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten
+    from src.elements.layers import Flatten, Unflatten, FixedStdDev
 
     _blocks = dict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
         hiddens=SimpleBlock(
-            net=migration['mlp_shared_encoder'],
+            net=migration.get_net("mlp_shared_encoder", activate_output=True),
             input_id="x"
         ),
         y=TopGenBlock(
-            net=migration['mlp_cluster_encoder'],
+            net=migration.get_net("mlp_cluster_encoder", activate_output=False),
             prior_shape=(500, ),
             prior_trainable=False,
             concat_prior=False,
             condition="hiddens",
-            output_distribution="normal"
+            output_distribution="laplace"
         ),
         z=GenBlock(
-            prior_net=migration['mlp_latent_decoder'],
-            posterior_net=migration["mlp_latent_encoder_concat_to_z"],
-            input_transform=migration['mlp_latent_encoder_y_to_concat'],
+            prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
+            posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
+            input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
             input_id="y",
             condition="hiddens",
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=[migration["mlp_data_decoder"], Unflatten(1, (2, *data_params.shape))],
+            net=[migration.get_net("mlp_data_decoder", activate_output=False),
+                 Unflatten(1, data_params.shape),
+                 FixedStdDev(0.4)],
             input_id="z",
             output_distribution="normal"
         ),
@@ -57,21 +59,21 @@ log_params = Hyperparams(
 
     # TRAIN LOG
     # --------------------
-    load_from_train=None,
-    dir_naming_scheme='timestamp',
-
     # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
+    load_from_train=None,
+    dir_naming_scheme='timestamp',
+
     # EVAL
     # --------------------
-    load_from_eval='2023-08-28__11-17/checkpoints/checkpoint-150.pth',
+    load_from_eval='migration/2023-09-05__18-26/checkpoints/checkpoint-0.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-28__11-17/checkpoints/checkpoint-150.pth',
+    load_from_synthesis='migration/2023-09-05__09-53/checkpoints/checkpoint-0.pth',
 )
 
 """
@@ -93,7 +95,7 @@ model_params = Hyperparams(
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
-    gradient_smoothing_beta=0.6931472,
+    gradient_smoothing_beta=1,#0.6931472,
 
     # Num of mixtures in the MoL layer
     num_output_mixtures=3,
@@ -119,7 +121,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(1, 20, 20),
+    shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )

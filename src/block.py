@@ -272,7 +272,7 @@ class GenBlock(SimpleGenBlock):
         prior = generate_distribution(pm, pv, self.output_distribution)
         if self.input_transform is not None:
             y = self.input_transform(y)
-        y_posterior = self.posterior_net(torch.cat([y, cond], dim=1))
+        y_posterior = self.posterior_net(torch.cat([cond, y], dim=1))
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.sample()
@@ -377,7 +377,7 @@ class TopGenBlock(GenBlock):
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
-        posterior_input = torch.cat([y, cond], dim=1) if self.concat_prior else cond
+        posterior_input = torch.cat([cond, y], dim=1) if self.concat_prior else cond
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
@@ -450,7 +450,7 @@ class ResidualGenBlock(GenBlock):
         pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
-        y_posterior = self.posterior_net(torch.cat([y, cond], dim=1))
+        y_posterior = self.posterior_net(torch.cat([y, cond], dim=1)) # y, cond fordított sorrendben mint máshol
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.sample()

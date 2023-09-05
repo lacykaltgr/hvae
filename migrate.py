@@ -16,14 +16,6 @@ def main():
 
     migration = MIGRATION_AGENT(
         path="migration/TDVAE_migration/weigths/mycurl-33750000",
-        activate_output=dict(
-            mlp_shared_encoder=True,
-            mlp_cluster_encoder=False,
-            mlp_latent_encoder_y_to_concat=True,
-            mlp_latent_encoder_concat_to_z=False,
-            mlp_latent_decoder=False,
-            mlp_data_decoder=False,
-        )
     )
     """
     ="checkpoints-imagenet32_baseline",
@@ -32,9 +24,7 @@ def main():
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()
 
-    with torch.no_grad():
-        _ = model(torch.ones((1, 1, 40, 40)))
-    #print(model.summary())
+    model.summary()
 
     optimizer = get_optimizer(model=model,
                               type=p.optimizer_params.type,
