@@ -1,9 +1,10 @@
-from src.elements.layers import Flatten, Unflatten
+from collections import OrderedDict
 
 
 def _model():
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ConcatBlock
     from src.hvae.hvae import hVAE as hvae
+    from src.elements.layers import Flatten, Unflatten
 
     _blocks = dict(
         x=InputBlock(

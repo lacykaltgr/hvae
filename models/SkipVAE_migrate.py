@@ -1,12 +1,12 @@
-from src.elements.layers import Flatten, Unflatten
+from collections import OrderedDict
 
 
 def _model(migration):
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ConcatBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import FixedStdDev
+    from src.elements.layers import FixedStdDev, Flatten, Unflatten
 
-    _blocks = dict(
+    _blocks = OrderedDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -26,7 +26,7 @@ def _model(migration):
             prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
             posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
             input_id="y",
-            input_transform=migration.get_net(migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True)),
+            input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
             condition="hiddens",
             output_distribution="normal"
         ),
@@ -79,7 +79,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-27__22-51/checkpoints/checkpoint-150.pth',
+    load_from_eval='migration/2023-09-06__15-18/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
@@ -124,7 +124,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 20, "old"),
+    dataset=dataset("natural", 40, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -132,7 +132,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(1, 20, 20),
+    shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )

@@ -1,8 +1,11 @@
+from collections import OrderedDict
+
+
 def _model(migration):
     from src.hvae.block import InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, ResidualGenBlock
     from src.hvae.hvae import hVAE as hvae
 
-    _blocks = dict()
+    _blocks = OrderedDict()
     _blocks.update({
         'x': InputBlock(net=migration.input_conv, )
     })

@@ -95,6 +95,7 @@ class MLPNet(SerializableModule):
         outputs = x if not self.residual else inputs + x
         return outputs
 
+
     @staticmethod
     def from_hparams(hparams: Hyperparams):
         return MLPNet(

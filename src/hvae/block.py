@@ -22,6 +22,11 @@ class _Block(SerializableModule):
         self.input = input_id
         self.output = self.input + "_out" if self.input is not None else None
 
+    def freeze(self, net_name: str):
+        for name, param in self.named_parameters():
+            if net_name in name:
+                param.requires_grad = False
+
     def set_output(self, output: str) -> None:
         self.output = output
 
@@ -31,6 +36,7 @@ class _Block(SerializableModule):
             output=self.output,
             type=self.__class__
         )
+
 
 
 class SimpleBlock(_Block):

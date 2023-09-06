@@ -1,10 +1,12 @@
-from src.elements.layers import Unflatten, Flatten
+from collections import OrderedDict
+
 
 def _model(migration):
-    from src.hvae.block import InputBlock, SimpleBlock, TopGenBlock, GenBlock, OutputBlock
+    from src.hvae.block import InputBlock, SimpleBlock, TopGenBlock, GenBlock, OutputBlock, ConcatBlock
     from src.hvae.hvae import hVAE as hvae
+    from src.elements.layers import Unflatten, Flatten, FixedStdDev
 
-    _blocks = dict(
+    _blocks = OrderedDict(
         x=InputBlock(
             net=Flatten(start_dim=1),
         ),
@@ -20,17 +22,29 @@ def _model(migration):
             output_distribution="laplace",
             concat_prior=False
         ),
-        z=GenBlock(
-            prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
-            posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
+        z_prior_mu=SimpleBlock(
             input_id="y",
-            input_transform=migration.get_net(migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True)),
+            net=migration.get_net("latent_prior_mu", activate_output=False),
+        ),
+        z_prior_sigma=SimpleBlock(
+            input_id="y",
+            net=migration.get_net("latent_prior_sigma", activate_output=False),
+        ),
+        z_prior=ConcatBlock(
+            inputs=["z_mu", "z_sigma"],
+        ),
+        z=GenBlock(
+            prior_net=None,
+            posterior_net=migration.get_net("mlp_latent_encoder", activate_output=False),
+            input_id="z_prior",
+            input_transform=None,
             condition="hiddens",
             output_distribution="normal"
         ),
         x_hat=OutputBlock(
-            net=[migration.get_net("mlp_cluster_encoder_final"),
-                Unflatten(1, (2, *data_params.shape))],
+            net=[migration.get_net("mlp_latent_decoder", activate_output=False),
+                 Unflatten(1,  data_params.shape),
+                 FixedStdDev(0.4)],
             input_id="z",
             output_distribution="laplace"
         ),
@@ -53,7 +67,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='LinearVAE',
+    name='LinearVAE_migrate',
 
     # TRAIN LOG
     # --------------------
@@ -112,7 +126,7 @@ from data.textures.textures import TexturesDataset as dataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 20, "old"),
+    dataset=dataset("natural", 40, "old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -120,7 +134,7 @@ data_params = Hyperparams(
     synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
-    shape=(1, 20, 20),
+    shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )

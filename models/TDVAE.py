@@ -1,10 +1,12 @@
+from collections import OrderedDict
+
+
 def _model():
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten
 
-
-    _blocks = dict(
+    _blocks = OrderedDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -139,6 +141,8 @@ train_params = Hyperparams(
     total_train_steps=640000,
     # training batch size
     batch_size=128,
+
+
 )
 
 """

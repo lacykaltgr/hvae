@@ -24,8 +24,8 @@ def main():
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    logger.info('Train step generator trainable params {:.3f}m.'.format(
-        np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000))
+    logger.info(f'Train step generator trainable params '
+                f'{np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000:.3f}m.')
     model = model.to(p.model_params.device)
 
     optimizer = get_optimizer(model=model,
@@ -52,6 +52,11 @@ def main():
 
     writer_train = create_tb_writer_for('train', checkpoint_path=checkpoint_path)
     writer_val = create_tb_writer_for('val', checkpoint_path=checkpoint_path)
+
+    if p.train_params.unfreeze_first:
+        model.unfreeeze()
+    if len(p.train_params.freeze_nets) > 0:
+        model.freeze(p.train_params.freeze_nets)
 
     train(model, optimizer, schedule, train_loader, val_loader, gloabal_step,
           writer_train, writer_val, checkpoint_path, logger)

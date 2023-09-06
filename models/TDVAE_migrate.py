@@ -1,9 +1,12 @@
+from collections import OrderedDict
+
+
 def _model(migration):
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten, FixedStdDev
 
-    _blocks = dict(
+    _blocks = OrderedDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -55,7 +58,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE_migrate',
+    name='TDVAE40125_migrate',
 
     # TRAIN LOG
     # --------------------
@@ -68,7 +71,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-05__19-28/checkpoints/checkpoint-0.pth',
+    load_from_eval='migration/2023-09-06__14-55/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
@@ -136,6 +139,10 @@ train_params = Hyperparams(
     total_train_steps=640000,
     # training batch size
     batch_size=128,
+
+    # Freeze spceific layers
+    unfreeze_first=False,
+    freeze_nets=[],
 )
 
 """

@@ -15,7 +15,7 @@ def main():
     p = get_hparams()
 
     migration = MIGRATION_AGENT(
-        path="migration/TDVAE_migration/weigths/mycurl-33750000",
+        path="migration/TDVAE_migration/weights_LinearVAE/eval_LinearVAE40/mycurl-30000000",
     )
 
     model = p.model_params.model(migration)
@@ -40,7 +40,6 @@ def main():
                             min_lr=p.optimizer_params.min_learning_rate,
                             last_epoch=torch.tensor(-1),
                             checkpoint=migration.get_schedule())
-
 
     checkpoint = Checkpoint(
         global_step=global_step,

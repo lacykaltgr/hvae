@@ -3,29 +3,30 @@ import logging
 import torch
 from torch import nn
 from torch import tensor
+from collections import OrderedDict
 
 from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, TopGenBlock
 from src.hvae.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
 class Encoder(nn.Module):
-    def __init__(self, encoder_blocks: nn.ModuleList):
+    def __init__(self, encoder_blocks: nn.ModuleDict):
         super(Encoder, self).__init__()
-        self.blocks: nn.ModuleList = encoder_blocks
+        self.blocks: nn.ModuleDict = encoder_blocks
 
     def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
-        for block in self.blocks:
+        for block in self.blocks.values():
             computed = block(computed)
-            if to_compute is not None and to_compute in computed.keys():
+            if to_compute is not None and to_compute in computed:
                 return computed
         return computed
 
 
 class Generator(nn.Module):
-    def __init__(self, blocks: nn.ModuleList):
+    def __init__(self, blocks: nn.ModuleDict):
         super(Generator, self).__init__()
-        self.blocks: nn.ModuleList = blocks
+        self.blocks: nn.ModuleDict = blocks
 
     def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
         distributions = []
@@ -34,7 +35,7 @@ class Generator(nn.Module):
             variate_masks = [None] * len(self.blocks)
         assert len(variate_masks) == len(self.blocks)
 
-        for block, variate_mask in zip(self.blocks, variate_masks):
+        for block, variate_mask in zip(self.blocks.values(), variate_masks):
             args = dict(computed=computed, variate_mask=variate_mask) \
                 if isinstance(block, GenBlock) else dict(computed=computed)
             output = block(**args)
@@ -49,7 +50,7 @@ class Generator(nn.Module):
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         with torch.no_grad():
-            for i, block in enumerate(self.blocks):
+            for i, block in enumerate(self.blocks.values()):
                 if not isinstance(block, SimpleBlock):
                     computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
                 else:
@@ -58,14 +59,14 @@ class Generator(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks: dict):
+    def __init__(self, blocks: OrderedDict):
         super(hVAE, self).__init__()
 
         self.input_block, output = next(((block, output) for output, block in blocks.items()
                                          if isinstance(block, InputBlock)), None)
         self.input_block.set_output(output)
-        encoder_blocks = nn.ModuleList()
-        generator_blocks = nn.ModuleList()
+        encoder_blocks = nn.ModuleDict()
+        generator_blocks = nn.ModuleDict()
         self.output_block, output = next(((block, output) for output, block in blocks.items()
                                           if isinstance(block, OutputBlock)), None)
         self.output_block.set_output(output)
@@ -77,9 +78,9 @@ class hVAE(nn.Module):
                 in_generator = True
             if not isinstance(block, (InputBlock, OutputBlock)):
                 if in_generator:
-                    generator_blocks.append(block)
+                    generator_blocks.update({output: block})
                 else:
-                    encoder_blocks.append(block)
+                    encoder_blocks.update({output: block})
 
         self.encoder: Encoder = Encoder(encoder_blocks)
         self.generator: Generator = Generator(generator_blocks)
@@ -109,11 +110,35 @@ class hVAE(nn.Module):
     def kldiv_stats(self, dataset):
         return compute_per_dimension_divergence_stats(self, dataset)
 
+    def freeze(self, nets: list):
+        for net in nets:
+            assert len(net) == 2
+            block_name, net_name = net
+
+            if block_name == "encoder":
+                assert net_name == "*"
+                for block in self.encoder.blocks.values():
+                    block.freeze("*")
+            elif block_name == "generator" or block_name == "decoder":
+                assert net_name == "*"
+                for block in self.generator.blocks.values():
+                    block.freeze("*")
+            elif block_name in self.encoder.blocks.keys():
+                self.encoder.blocks[block_name].freeze(net_name)
+            elif block_name in self.generator.blocks.keys():
+                self.generator.blocks[block_name].freeze(net_name)
+            else:
+                raise ValueError(f"Unknown net {block_name} {net_name}")
+
+    def unfreeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = True
+
     def train_model(self, optimizer, schedule,
                     train_loader, val_loader, checkpoint,
                     writer_train, writer_val, checkpoint_path, logger=None):
         if logger is None:
-            from utils import setup_logger
+            from src.utils import setup_logger
             logger = setup_logger(checkpoint_path)
         train(self, optimizer, schedule,
               train_loader, val_loader, checkpoint['global_step'],
@@ -178,16 +203,16 @@ class hVAE(nn.Module):
     def serialize(self):
         blocks = list()
         blocks.append(self.input_block.serialize())
-        for block in self.encoder.blocks:
+        for block in self.encoder.blocks.values():
             blocks.append(block.serialize())
-        for block in self.generator.blocks:
+        for block in self.generator.blocks.values():
             blocks.append(block.serialize())
         blocks.append(self.output_block.serialize())
         return blocks
 
     @staticmethod
     def deserialize(serialized_blocks):
-        blocks = dict()
+        blocks = OrderedDict()
         for block in serialized_blocks:
             blocks[block["output"]] = block["type"].deserialize(block)
         return hVAE(blocks)

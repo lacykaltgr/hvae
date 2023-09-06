@@ -4,7 +4,7 @@ import logging
 import numpy
 import numpy as np
 import torch
-from torch.nn import Sequential, Module
+from torch.nn import Sequential, Module, ModuleList
 from torch.utils.tensorboard import SummaryWriter
 
 from hparams import get_hparams
@@ -295,3 +295,5 @@ class SerializableModule(Module):
     @staticmethod
     def deserialize(serialized):
         return serialized["type"]
+
+

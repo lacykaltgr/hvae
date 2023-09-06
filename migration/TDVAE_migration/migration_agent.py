@@ -10,6 +10,9 @@ class TDVAEMigrationAgent:
         modules = dict()
         for v in variables:
             name, shape = v
+            print(name)
+        for v in variables:
+            name, shape = v
             path_list = name.split('/')
             if len(path_list) < 3:
                 if name == 'global_step':
@@ -35,11 +38,11 @@ class TDVAEMigrationAgent:
             modules[module_name][layer_name]['shape'] = shape
         self.modules = modules
 
-    def get_net(self, net_name, activate_output):
+    def get_net(self, net_name, activate_output) -> MLPNet:
         module = self.modules[net_name]
 
-        if module['type'] != 'mlp':
-            raise NotImplementedError(f'Module type {module["type"]} not implemented.')
+        #if module['type'] != 'mlp':
+        #    raise NotImplementedError(f'Module type {module["type"]} not implemented.')
 
         input_size = None
         hidden_sizes = []
