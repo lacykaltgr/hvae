@@ -10,9 +10,6 @@ class TDVAEMigrationAgent:
         modules = dict()
         for v in variables:
             name, shape = v
-            print(name)
-        for v in variables:
-            name, shape = v
             path_list = name.split('/')
             if len(path_list) < 3:
                 if name == 'global_step':
@@ -21,17 +18,19 @@ class TDVAEMigrationAgent:
                     self.beta1_power = checkpoint.get_tensor(name)
                 elif name == 'beta2_power':
                     self.beta2_power = checkpoint.get_tensor(name)
+                elif name == 'n_y_active':
+                    self.n_y_active = checkpoint.get_tensor(name)
                 else:
                     raise NotImplementedError(f'Variable {name} not implemented.')
                 continue
             if path_list[-1] == 'Adam' or path_list[-1] == 'Adam_1':
                 continue
-            module_name = path_list[-3]
-            module_type = path_list[-3].split('_')[0]
+            module_name = path_list[-3] \
+                if len(path_list) > 3 or path_list[-3].startswith('mlp') else path_list[-2]
             layer_name = path_list[-2]
             param_type = path_list[-1]
             if module_name not in modules.keys():
-                modules[module_name] = dict(type=module_type)
+                modules[module_name] = dict()
             if layer_name not in modules[module_name].keys():
                 modules[module_name][layer_name] = dict()
             modules[module_name][layer_name][param_type] = checkpoint.get_tensor(name)
@@ -41,15 +40,10 @@ class TDVAEMigrationAgent:
     def get_net(self, net_name, activate_output) -> MLPNet:
         module = self.modules[net_name]
 
-        #if module['type'] != 'mlp':
-        #    raise NotImplementedError(f'Module type {module["type"]} not implemented.')
-
         input_size = None
         hidden_sizes = []
         output_size = None
         for layer_name, layer in module.items():
-            if layer_name == 'type':
-                continue
             for param_type, param in layer.items():
                 if param_type == 'w':
                     if input_size is None:

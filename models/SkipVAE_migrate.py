@@ -18,7 +18,7 @@ def _model(migration):
             net=migration.get_net("mlp_cluster_encoder", activate_output=False),
             prior_shape=(500, ),
             prior_trainable=True,
-            concat_prior=False,
+            concat_posterior=False,
             condition="hiddens",
             output_distribution="laplace"
         ),

@@ -48,7 +48,7 @@ class UnpooLayer(SerializableModule):
                nn.LeakyReLU(negative_slope=0.1),
                Interpolate(scale=self.strides)]
 
-        self.scale_bias: nn.Parameter = None
+        self.scale_bias: nn.Parameter or None = None
         self.ops = nn.Sequential(*ops)
 
     def reset_parameters(self, inputs):
@@ -130,6 +130,49 @@ class FixedStdDev(SerializableModule):
     @staticmethod
     def deserialize(serialized):
         return FixedStdDev(**serialized["params"])
+
+
+class KeepShapeWithValue(SerializableModule):
+    def __init__(self, value):
+        super(KeepShapeWithValue, self).__init__()
+        self.value = value
+
+    def forward(self, x):
+        return self.value * torch.ones_like(x)
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            value=self.value
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return KeepShapeWithValue(**serialized["params"])
+
+
+class EinsumLayer(SerializableModule):
+    def __init__(self, equation):
+        super(EinsumLayer, self).__init__()
+        self.equation = equation
+
+    def forward(self, inputs):
+        output = torch.einsum(self.equation, inputs)
+        return output
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            equation=self.equation
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return EinsumLayer(**serialized["params"])
+
+
 
 
 class Conv2d(nn.Conv2d):

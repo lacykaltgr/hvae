@@ -1,0 +1,11 @@
+#!/bin/sh
+
+desired_directory='migration/ChainVAE_migration/weights'
+
+if [ -d "$desired_directory" ];
+then
+  cd "$desired_directory" || exit
+fi
+
+wget -c -O ChainVAE.zip 'https://zenodo.org/record/6644895/files/chain_40.zip?download=1'
+unzip ChainVAE.zip

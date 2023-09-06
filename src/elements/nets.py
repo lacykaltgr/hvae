@@ -1,3 +1,6 @@
+from collections import OrderedDict
+from torch import tensor
+
 from src.elements.layers import *
 from src.hparams import get_hparams, Hyperparams
 from src.utils import SerializableModule, SerializableSequential as Sequential
@@ -41,6 +44,9 @@ def get_net(model) -> Sequential:
         else:
             raise NotImplementedError("Model type not supported.")
 
+    elif isinstance(model, BlockNet):
+        return Sequential(model)
+
 
     # Load model from SerializableModule
     elif isinstance(model, SerializableModule):
@@ -50,6 +56,7 @@ def get_net(model) -> Sequential:
     # Load model from SerializableSequential
     elif isinstance(model, Sequential):
         return model
+
 
     # Load model from list of any of the above
     elif isinstance(model, list):
@@ -253,3 +260,84 @@ class ConvNet(SerializableModule):
         net = ConvNet(**serialized["params"])
         net.load_state_dict(serialized["state_dict"])
         return net
+
+
+class BlockNet(SerializableModule):
+
+    def __init__(self, **blocks):
+        from src.hvae.block import InputBlock
+        super(BlockNet, self).__init__()
+
+        self.input_block, output = next(((block, output) for output, block in blocks.items()
+                                         if isinstance(block, InputBlock)), None)
+        self.input_block.set_output(output)
+        self.output_block = next((block for _, block in blocks.items()
+                                  if isinstance(block, self.OutputBlock)), None)
+
+        self.blocks = nn.ModuleDict()
+        for output, block in blocks.items():
+            if not isinstance(block, (InputBlock, self.OutputBlock)):
+                block.set_output(output)
+                self.blocks.update({output: block})
+
+    def forward(self, inputs):
+        computed = self.input_block(inputs)
+        computed = self.propogate_blocks(computed)
+        output = self.output_block(computed)
+        return output
+
+    def propogate_blocks(self, computed):
+        for block in self.blocks.values():
+            output = block(computed=computed)
+            if isinstance(output, tuple):
+                computed, _ = output
+            else:
+                computed = output
+        return computed
+
+    def serialize(self):
+        blocks = list()
+        blocks.append(self.input_block.serialize())
+        for block in self.blocks.values():
+            blocks.append(block.serialize())
+        blocks.append(self.output_block.serialize())
+        return dict(
+            type=self.__class__,
+            blocks=blocks
+        )
+
+    @staticmethod
+    def deserialize(serialized):
+        blocks = OrderedDict()
+        for block in serialized["blocks"]:
+            blocks[block["output"]] = block["type"].deserialize(block)
+        return BlockNet(**blocks)
+
+    class OutputBlock(SerializableModule):
+        """
+        Final block of the model
+        Functions like a SimpleBlock
+        Only for use in BlockNet
+        """
+        def __init__(self, input_id: str):
+            super(BlockNet.OutputBlock, self).__init__()
+            self.input = input_id
+
+        def forward(self, computed: dict) -> (tensor, dict, tuple):
+            output = computed[self.input]
+            return output
+
+        def serialize(self):
+            return dict(
+                type=self.__class__,
+                input=self.input,
+                output="output"
+            )
+
+        @staticmethod
+        def deserialize(serialized: dict):
+            return BlockNet.OutputBlock(input_id=serialized["input"])
+
+
+
+

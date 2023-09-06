@@ -7,7 +7,7 @@ from src.checkpoint import Checkpoint
 
 
 # Migration Agent
-from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent as MIGRATION_AGENT
+from migration.ChainVAE_migration.migration_agent import ChainVAEMigrationAgent as MIGRATION_AGENT
 
 
 def main():
@@ -15,8 +15,10 @@ def main():
     p = get_hparams()
 
     migration = MIGRATION_AGENT(
-        path="migration/TDVAE_migration/weights_LinearVAE/eval_LinearVAE40/mycurl-30000000",
+        path="migration/ChainVAE_migration/weights/TD_comparison_40",
     )
+
+    exit()
 
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()

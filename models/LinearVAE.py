@@ -15,7 +15,7 @@ def _model():
             prior_trainable=True,
             condition="x",
             output_distribution="laplace",
-            concat_prior=False
+            concat_posterior=False
         ),
         x_hat=OutputBlock(
             net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],

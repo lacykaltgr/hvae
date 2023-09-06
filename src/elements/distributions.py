@@ -36,6 +36,9 @@ def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 
             max_pix_value=255,
         )
 
+    if distribution == 'onehot_categorical':
+        return dist.OneHotCategorical(logits=mu)
+
     sigma_nonlin = params.distribution_base if sigma_nonlin is None else sigma_nonlin
     sigma_param = params.distribution_sigma_param if sigma_param is None else sigma_param
     beta = params.gradient_smoothing_beta

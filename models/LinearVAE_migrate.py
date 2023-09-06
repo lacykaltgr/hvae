@@ -2,9 +2,10 @@ from collections import OrderedDict
 
 
 def _model(migration):
-    from src.hvae.block import InputBlock, SimpleBlock, TopGenBlock, GenBlock, OutputBlock, ConcatBlock
+    from src.hvae.block import InputBlock, SimpleBlock, TopGenBlock, GenBlock, OutputBlock, ConcatBlock, DualInputBlock, SimpleGenBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Unflatten, Flatten, FixedStdDev
+    from src.elements.nets import BlockNet
+    from src.elements.layers import Unflatten, Flatten, FixedStdDev, KeepShapeWithValue, EinsumLayer
 
     _blocks = OrderedDict(
         x=InputBlock(
@@ -15,38 +16,54 @@ def _model(migration):
             input_id="x",
         ),
         y=TopGenBlock(
-            net=migration.get_net("mlp_cluster_encoder_final", activate_output=False),
-            prior_shape=(500, ),
-            prior_trainable=True,
-            condition="x",
-            output_distribution="laplace",
-            concat_prior=False
+            net=[migration.get_net("mlp_cluster_encoder_final", activate_output=False),
+                 KeepShapeWithValue(1)],
+            prior_shape=(1, ),
+            prior_trainable=False,
+            prior_data=1,
+            condition="hiddens",
+            output_distribution="onehot_categorical",
+            concat_posterior=False
         ),
-        z_prior_mu=SimpleBlock(
-            input_id="y",
-            net=migration.get_net("latent_prior_mu", activate_output=False),
+        hiddens_to_z=SimpleBlock(
+            input_id="hiddens",
+            net=migration.get_net("mlp_latent_encoder_0", activate_output=False),
         ),
-        z_prior_sigma=SimpleBlock(
-            input_id="y",
-            net=migration.get_net("latent_prior_sigma", activate_output=False),
-        ),
-        z_prior=ConcatBlock(
-            inputs=["z_mu", "z_sigma"],
+        z_condition=DualInputBlock(
+            inputs=["y", "hiddens_to_z"],
+            net=EinsumLayer(equation='ij,ik->ik'),
         ),
         z=GenBlock(
-            prior_net=None,
-            posterior_net=migration.get_net("mlp_latent_encoder", activate_output=False),
-            input_id="z_prior",
-            input_transform=None,
-            condition="hiddens",
-            output_distribution="normal"
+            prior_net=BlockNet(
+                y=InputBlock(),
+                z_prior_mu=SimpleBlock(
+                    input_id="y",
+                    net=migration.get_net("latent_prior_mu", activate_output=False),
+                ),
+                z_prior_sigma=SimpleBlock(
+                    input_id="y",
+                    net=migration.get_net("latent_prior_sigma", activate_output=False),
+                ),
+                z_prior=ConcatBlock(
+                    inputs=["z_prior_mu", "z_prior_sigma"],
+                    dimension=1,
+                ),
+                output=BlockNet.OutputBlock(
+                    input_id="z_prior",
+                )
+            ),
+            posterior_net=None,
+            input_id="y",
+            concat_posterior=False,
+            condition="z_condition",
+            output_distribution="laplace"
         ),
         x_hat=OutputBlock(
             net=[migration.get_net("mlp_latent_decoder", activate_output=False),
                  Unflatten(1,  data_params.shape),
                  FixedStdDev(0.4)],
             input_id="z",
-            output_distribution="laplace"
+            output_distribution="normal"
         ),
     )
 
@@ -81,7 +98,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-27__23-13/checkpoints/checkpoint-1800.pth',
+    load_from_eval='migration/2023-09-06__23-10/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
@@ -367,3 +384,5 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
+
+

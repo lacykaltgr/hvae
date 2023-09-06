@@ -83,7 +83,12 @@ def linear_temperature(min_temp, max_temp, n_layers):
 
 
 def split_mu_sigma(x, chunks=2, dim=1):
-    assert x.shape[dim] % chunks == 0
+    if x.shape[dim] % chunks != 0:
+        if x.shape[dim] == 1:
+            return x, None
+        raise ValueError(f"Can't split tensor of shape "
+                         f"{x.shape} into {chunks} chunks "
+                         f"along dim {dim}")
     mu, sigma = torch.chunk(x, chunks, dim=dim)
     if mu.shape[dim] == 1:
         mu = mu.squeeze(dim)

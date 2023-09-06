@@ -38,7 +38,6 @@ class _Block(SerializableModule):
         )
 
 
-
 class SimpleBlock(_Block):
     """
     Simple block that takes an input and returns an output
@@ -72,6 +71,8 @@ class ConcatBlock(_Block):
     Concatenates two inputs along a given dimension
     """
     def __init__(self, inputs: List[str], dimension: int = 1):
+        if len(inputs) != 2:
+            raise ValueError("ConcatBlock only supports two inputs")
         super().__init__(None)
         self.inputs = inputs
         self.dimension = dimension
@@ -79,9 +80,6 @@ class ConcatBlock(_Block):
     def forward(self, computed: dict) -> dict:
         if not all([inp in computed for inp in self.inputs]):
             raise ValueError("Not all inputs found in computed")
-        if len(self.inputs) != 2:
-            raise ValueError("ConcatBlock only supports two inputs")
-        assert len(self.inputs) == 2
         x, skip = [computed[inp] for inp in self.inputs]
         x_skip = torch.cat([x, skip], dim=self.dimension)
         computed[self.output] = x_skip
@@ -101,12 +99,45 @@ class ConcatBlock(_Block):
         )
 
 
+class DualInputBlock(_Block):
+    """
+    Takes 2 inputs
+    """
+    def __init__(self, inputs: List[str], net):
+        super().__init__(None)
+        assert len(inputs) == 2
+        self.inputs = inputs
+        self.net = get_net(net)
+
+    def forward(self, computed: dict) -> dict:
+        if not all([inp in computed for inp in self.inputs]):
+            raise ValueError("Not all inputs found in computed")
+        input1, input2 = [computed[inp] for inp in self.inputs]
+        output = self.net([input1, input2])
+        computed[self.output] = output
+        return computed
+
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["inputs"] = self.inputs
+        serialized["net"] = self.net.serialize()
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        net = Sequential.deserialize(serialized["net"])
+        return DualInputBlock(
+            inputs=serialized["inputs"],
+            net=net
+        )
+
+
 class InputBlock(SimpleBlock):
     """
     Block that takes an input
     and runs it through a preprocessing net if one is given
     """
-    def __init__(self, net):
+    def __init__(self, net=None):
         super(InputBlock, self).__init__(net, "input")
 
     def forward(self, inputs: tensor) -> dict:
@@ -262,13 +293,17 @@ class GenBlock(SimpleGenBlock):
     def __init__(self,
                  prior_net,
                  posterior_net,
-                 input_transform,
                  input_id: str, condition: str,
-                 output_distribution: str = 'normal'):
+                 concat_posterior: bool,
+                 output_distribution: str = 'normal',
+                 input_transform=None,
+                 condition_transform=None):
         super(GenBlock, self).__init__(prior_net, input_id, output_distribution)
         self.prior_net: Sequential = get_net(prior_net)
         self.posterior_net: Sequential = get_net(posterior_net)
         self.input_transform: Sequential = get_net(input_transform)
+        self.condition_transform = get_net(condition_transform)
+        self.concat_posterior = concat_posterior
         self.condition = condition
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
@@ -277,7 +312,10 @@ class GenBlock(SimpleGenBlock):
         prior = generate_distribution(pm, pv, self.output_distribution)
         if self.input_transform is not None:
             y = self.input_transform(y)
-        y_posterior = self.posterior_net(torch.cat([cond, y], dim=1))
+        if self.condition_transform is not None:
+            cond = self.condition_transform(cond)
+        posterior_input = torch.cat([cond, y], dim=1) if self.concat_posterior else cond
+        y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.sample()
@@ -330,8 +368,10 @@ class GenBlock(SimpleGenBlock):
         serialized["prior_net"] = self.prior_net.serialize()
         serialized["posterior_net"] = self.posterior_net.serialize()
         serialized["input_transform"] = self.input_transform.serialize()
+        serialized["condition_transform"] = self.condition_transform.serialize()
         serialized["condition"] = self.condition
         serialized["output_distribution"] = self.output_distribution
+        serialized["concat_posterior"] = self.concat_posterior
         return serialized
 
     @staticmethod
@@ -339,13 +379,16 @@ class GenBlock(SimpleGenBlock):
         prior_net = Sequential.deserialize(serialized["prior_net"])
         posterior_net = Sequential.deserialize(serialized["posterior_net"])
         input_transform = Sequential.deserialize(serialized["input_transform"])
+        condition_transform = Sequential.deserialize(serialized["condition_transform"])
         return GenBlock(
             prior_net=prior_net,
             posterior_net=posterior_net,
             input_transform=input_transform,
+            condition_transform=condition_transform,
             input_id=serialized["input"],
             condition=serialized["condition"],
-            output_distribution=serialized["output_distribution"]
+            output_distribution=serialized["output_distribution"],
+            concat_posterior=serialized["concat_posterior"]
         )
 
 
@@ -358,12 +401,14 @@ class TopGenBlock(GenBlock):
     def __init__(self, net,
                  prior_shape: tuple,
                  prior_trainable: bool,
-                 concat_prior: bool,
+                 concat_posterior: bool,
                  condition: str,
                  output_distribution: str = 'normal',
                  prior_data=None):
-        super(TopGenBlock, self).__init__(None, net, None, 'trainable_h', condition, output_distribution)
-        self.concat_prior = concat_prior
+        super(TopGenBlock, self).__init__(prior_net=None, posterior_net=net,
+                                          input_id='trainable_h', condition=condition,
+                                          output_distribution=output_distribution,
+                                          concat_posterior=concat_posterior)
         self.prior_shape = prior_shape
         self.prior_trainable = prior_trainable
 
@@ -382,7 +427,7 @@ class TopGenBlock(GenBlock):
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
-        posterior_input = torch.cat([cond, y], dim=1) if self.concat_prior else cond
+        posterior_input = torch.cat([cond, y], dim=1) if self.concat_posterior else cond
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
@@ -399,7 +444,7 @@ class TopGenBlock(GenBlock):
             raise ValueError(f"Condition {self.condition} not found in computed")
         cond = computed[self.condition]
         x = torch.tile(self.trainable_h, (cond.shape[0], 1))
-        if cond.shape != x.shape and self.concat_prior:
+        if cond.shape != x.shape and self.concat_posterior:
             x = x.resize(cond.shape)
         z, distributions = self._sample(x, cond)
         computed[self.output] = z
@@ -416,7 +461,7 @@ class TopGenBlock(GenBlock):
     def serialize(self) -> dict:
         serialized = super().serialize()
         serialized["trainable_h"] = self.trainable_h.data
-        serialized["concat_prior"] = self.concat_prior
+        serialized["concat_prior"] = self.concat_posterior
         serialized["prior_shape"] = self.trainable_h.shape
         serialized["prior_trainable"] = self.trainable_h.requires_grad
         return serialized
@@ -428,7 +473,7 @@ class TopGenBlock(GenBlock):
             net=net,
             prior_shape=serialized["prior_shape"],
             prior_trainable=serialized["prior_trainable"],
-            concat_prior=serialized["concat_prior"],
+            concat_posterior=serialized["concat_prior"],
             condition=serialized["condition"],
             output_distribution=serialized["output_distribution"],
             prior_data=serialized["trainable_h"]

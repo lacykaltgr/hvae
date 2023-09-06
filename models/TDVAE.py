@@ -18,7 +18,7 @@ def _model():
             net=hiddens_to_y_net,
             prior_shape=(500, ),
             prior_trainable=False,
-            concat_prior=False,
+            concat_posterior=False,
             condition="hiddens",
             output_distribution="laplace"
         ),
