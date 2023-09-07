@@ -16,11 +16,17 @@ class Encoder(nn.Module):
 
     def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
+        distributions = []
         for block in self.blocks.values():
-            computed = block(computed)
+            output = block(computed)
+            if isinstance(output, tuple):
+                computed, dists = output
+                distributions.append(dists)
+            else:
+                computed = output
             if to_compute is not None and to_compute in computed:
                 return computed
-        return computed
+        return computed, distributions
 
 
 class Generator(nn.Module):
@@ -28,8 +34,8 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.blocks: nn.ModuleDict = blocks
 
-    def forward(self, computed: dict, variate_masks: list = None, to_compute: str = None) -> (tensor, dict, list):
-        distributions = []
+    def forward(self, computed: dict, distributions: list, variate_masks: list = None, to_compute: str = None) \
+            -> (tensor, dict, list):
 
         if variate_masks is None:
             variate_masks = [None] * len(self.blocks)
@@ -87,7 +93,7 @@ class hVAE(nn.Module):
 
     def compute_function(self, block_name) -> (tensor, dict):
         def compute(x: tensor) -> (tensor, dict):
-            computed = self.encoder(x, to_compute=block_name)
+            computed, _ = self.encoder(x, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
             computed, _ = self.generator(computed, to_compute=block_name)
@@ -154,8 +160,8 @@ class hVAE(nn.Module):
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
         computed = self.input_block(x)
-        computed = self.encoder(computed)
-        computed, distributions = self.generator(computed, variate_masks)
+        computed, distributions = self.encoder(computed)
+        computed, distributions = self.generator(computed, distributions, variate_masks)
         output_sample, computed, output_distribution = self.output_block(computed)
         distributions.append(output_distribution)
         return output_sample, computed, distributions

@@ -18,8 +18,6 @@ def main():
         path="migration/ChainVAE_migration/weights/TD_comparison_40",
     )
 
-    exit()
-
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()
 

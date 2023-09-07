@@ -3,7 +3,7 @@ import os
 import json
 import tensorflow as tf
 
-from migration.ChainVAE_migration.utils.models import VAE_model, nested_model_summary
+from migration.ChainVAE_migration.utils.models import VAE_model, nested_model_summary, shared_NN
 from src.elements.nets import MLPNet
 
 class ChainVAEMigrationAgent:
@@ -23,12 +23,9 @@ class ChainVAEMigrationAgent:
 
         input = tf.ones((1, self.model_configs["q_z1_x_configs"]["input_shape"]))
         self.model(input)
-        print(self.model.q_z2_z1_model.weights[3].shape)
-        print("cső")
 
-        #nested_model_summary(self.model)
-
-    def get_net(self, config):
+    def get_net(self, net_name):
+        config = self.model_configs[net_name + "_configs"]
         neurons = config["neurons"]
         n_hidden_layers = config["hidden_layers"]
         activation = config["activation"]
@@ -46,11 +43,17 @@ class ChainVAEMigrationAgent:
         if distribution == "normal" or distribution == "laplace":
             output_size = 2 * output_shape
         elif distribution == "observation_normal":
-            output_size = torch.prod(output_shape)
+            output_size = torch.prod(torch.tensor(output_shape))
         else:
             output_size = output_shape
 
-        net = MLPNet(
+        if activation == "softplus":
+            activation = torch.nn.Softplus()
+
+
+        net: shared_NN = self.model.__getattribute__(net_name + "_model")
+
+        migrated_net = MLPNet(
             input_size,
             hidden_layers,
             output_size,
@@ -58,12 +61,17 @@ class ChainVAEMigrationAgent:
             activate_output=False
         )
 
+        layer_i = len(migrated_net.mlp_layers) - 1
         with torch.no_grad():
-            for layer in net.mlp_layers.modules():
+            for layer in migrated_net.mlp_layers[:-1]:
                 if isinstance(layer, torch.nn.Linear):
-                    layer.weight.copy_(torch.tensor(layers[layer_i]['w']).mT)
-                    layer.bias.copy_(torch.tensor(layers[layer_i]['b']))
-        return net
+                    print(layer.weight.shape, tf.transpose(net.weights[layer_i-1]).shape)
+                    print(layer.bias.shape, net.weights[layer_i].shape)
+                    #layer.weight.copy_(torch.tensor(layers[layer_i]['w']).mT)
+                    #layer.bias.copy_(torch.tensor(layers[layer_i]['b']))
+                    layer_i -= 2
+        return migrated_net
+
 
 
 
@@ -73,6 +81,9 @@ class ChainVAEMigrationAgent:
 
     def get_schedule(self):
         return None
+
+    def get_global_step(self):
+        return -1
 
 
 
