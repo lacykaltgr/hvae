@@ -45,7 +45,7 @@ class shared_NN(tfk.Model):
         output_shape = self.configs["output_shape"]
 
         if distribution == "normal":
-            self.prior = tfd.Independent(tfd.Normal(loc=tf.zeros(output_shape), scale=1),reinterpreted_batch_ndims=1)
+            self.prior = tfd.Independent(tfd.Normal(loc=tf.zeros(output_shape), scale=1), reinterpreted_batch_ndims=1)
             self.distribution_layers=[
                 tfkl.Dense(2*output_shape,activation=None,name=f"{self.model_name}_dense_dist_params"),
                 tfpl.DistributionLambda(

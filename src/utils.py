@@ -145,7 +145,8 @@ def get_save_load_paths(mode='train'):
 
     elif mode == 'migration':
         import datetime
-        save_dir = os.path.join(f"{p.dir}{p.name}/migration", f"{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}", )
+        save_dir = os.path.join(f"{p.dir}{p.name}/migration",
+                                f"{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}", )
         os.makedirs(save_dir, exist_ok=True)
         return None, save_dir
 
@@ -154,26 +155,19 @@ def get_save_load_paths(mode='train'):
 
 
 def tensorboard_log(model, optimizer, global_step, writer,
-                    losses, outputs, targets,
-                    updates=None, global_norm=None, mode='train'):
+                    losses, outputs, targets, mode='train'):
     for key, value in losses.items():
-        if isinstance(value, (torch.Tensor, numpy.ndarray)) and len(value.shape) == 0:
+        if isinstance(value, (torch.Tensor, numpy.ndarray)) and len(value.shape) == 0 \
+                or isinstance(value, (float, int)):
             writer.add_scalar(f"Losses/{key}", value, global_step)
     writer.add_histogram("Distributions/target", targets, global_step, bins=20)
     writer.add_histogram("Distributions/output", torch.clamp(outputs, min=-1., max=1.), global_step, bins=20)
 
     if mode == 'train':
         for variable in model.parameters():
-            writer.add_histogram("Weights/{}".format(variable.name), variable, global_step)
+            writer.add_histogram(f"Weights/{variable.name}", variable, global_step)
         # Get the learning rate from the optimizer
         writer.add_scalar("Schedules/learning_rate", optimizer.param_groups[0]['lr'], global_step)
-        if updates is not None:
-            for layer, update in updates.items():
-                writer.add_scalar("Updates/{}".format(layer), update, global_step)
-            max_updates = torch.max(torch.stack(list(updates.values())))
-            assert global_norm is not None
-            writer.add_scalar("Mean_Max_Updates/Global_norm", global_norm, global_step)
-            writer.add_scalar("Mean_Max_Updates/Max_updates", max_updates, global_step)
 
     # Save artifacts
     plot_image(outputs[0], targets[0], global_step, writer=writer)
@@ -233,30 +227,55 @@ def setup_logger(checkpoint_path: str) -> logging.Logger:
 
 
 def prepare_for_log(results: dict):
-    p = get_hparams().eval_params
-    results["elbo"] = results["elbo"].detach().cpu().item()
-    results["reconstruction_loss"] = results["reconstruction_loss"].detach().cpu().item()
-    results["kl_div"] = results["kl_div"].detach().cpu().item()
-    results["avg_reconstruction_loss"] = results["avg_reconstruction_loss"].detach().cpu().item()
-    results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
-    results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
-                                         for v in results["avg_var_prior_losses"]])
-    results.update({f'latent_kl_{i}': v for i, v in enumerate(results["avg_var_prior_losses"])})
+    if "elbo" in results.keys():
+        results["elbo"] = results["elbo"].detach().cpu().item()
+    if "reconstruction_loss" in results.keys():
+        results["reconstruction_loss"] = results["reconstruction_loss"].detach().cpu().item()
+    if "kl_div" in results.keys():
+        results["kl_div"] = results["kl_div"].detach().cpu().item()
+    if "avg_reconstruction_loss" in results.keys():
+        results["avg_reconstruction_loss"] = results["avg_reconstruction_loss"].detach().cpu().item()
+    if "avg_var_prior_losses" in results.keys():
+        results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
+        p = get_hparams().eval_params
+        results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
+                                            for v in results["avg_var_prior_losses"]])
+        results.update({f'latent_kl_{i}': v.detach().cpu().item() for i, v in enumerate(results["avg_var_prior_losses"])})
+        results.pop("avg_var_prior_losses")
     return results
 
 
 def params_to_file(params, filepath):
-    with open(filepath, 'a') as file:
-        text = "PARAMETERS\n"
-        for param_group in params.keys():
-            text += f"{param_group}:\n" \
-                   f"-------------------\n"
-            for param in params[param_group].keys():
-                text += f"{param}: {params[param_group][param]}\n"
-            text += f"-------------------\n"
-        file.write(text)
-        file.close()
+    extension = filepath.split('.')[-1]
+    if extension == "txt":
+        with open(filepath, 'a') as file:
+            text = "PARAMETERS\n"
+            for param_group in params.keys():
+                text += f"{param_group}:\n" \
+                        f"-------------------\n"
+                for param in params[param_group].keys():
+                    text += f"{param}: {params[param_group][param]}\n"
+                text += f"-------------------\n"
+            file.write(text)
+            file.close()
+    elif extension == "json":
+        import json
+        with open(filepath, 'w') as file:
+            json.dump(params.to_json(), file, indent=4)
+            file.close()
     return True
+
+
+def log_to_csv(results, checkpoint_path, mode: str = 'train'):
+    import pandas as pd
+    filepath = os.path.join(checkpoint_path, f'{mode}_log.csv')
+    new_record = pd.DataFrame(results, index=[0])
+    if os.path.isfile(filepath):
+        df = pd.read_csv(filepath)
+        df = pd.concat([df, new_record], ignore_index=True)
+    else:
+        df = new_record
+    df.to_csv(filepath, index=False)
 
 
 def print_line(logger: logging.Logger, newline_after: False):
@@ -300,5 +319,3 @@ class SerializableModule(Module):
     @staticmethod
     def deserialize(serialized):
         return serialized["type"]
-
-

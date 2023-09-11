@@ -32,7 +32,8 @@ def _model():
             input_transform=None,
             input_id="y_concat",
             condition="hiddens",
-            output_distribution="normal"
+            output_distribution="normal",
+            concat_posterior=True,
         ),
         x_hat=OutputBlock(
             net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
@@ -142,7 +143,9 @@ train_params = Hyperparams(
     # training batch size
     batch_size=128,
 
-
+    # Freeze spceific layers
+    unfreeze_first=False,
+    freeze_nets=[],
 )
 
 """
@@ -322,7 +325,8 @@ mlp_params = Hyperparams(
     hidden_sizes=[],
     output_size=1000,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 cnn_params = Hyperparams(
@@ -372,7 +376,8 @@ x_to_hiddens_net = Hyperparams(
     hidden_sizes=[],
     output_size=hiddens_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 hiddens_to_y_net = Hyperparams(
@@ -381,7 +386,8 @@ hiddens_to_y_net = Hyperparams(
     hidden_sizes=[1000, 500],
     output_size=2*y_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 y_to_concat_net = Hyperparams(
@@ -390,7 +396,8 @@ y_to_concat_net = Hyperparams(
     hidden_sizes=[500, 1000],
     output_size=hiddens_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 z_prior_net = Hyperparams(
@@ -399,7 +406,8 @@ z_prior_net = Hyperparams(
     hidden_sizes=[2000],
     output_size=2*z_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 z_posterior_net = Hyperparams(
@@ -408,7 +416,8 @@ z_posterior_net = Hyperparams(
     hidden_sizes=[],
     output_size=2*z_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )
 
 z_to_x_net = Hyperparams(
@@ -417,5 +426,6 @@ z_to_x_net = Hyperparams(
     hidden_sizes=[],
     output_size=2*x_size,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True,
 )

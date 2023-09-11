@@ -1,5 +1,5 @@
 from collections import OrderedDict
-
+import torch
 
 def _model(migration):
     from src.hvae.block import SimpleGenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
@@ -17,9 +17,10 @@ def _model(migration):
         ),
         y=TopGenBlock(
             net=migration.get_net("q_z2_z1"),
-            prior_shape=(500, ),
-            prior_trainable=True,
+            prior_shape=(None, ),
+            prior_trainable=False,
             concat_posterior=False,
+            prior_data=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1),
             condition="hiddens",
             output_distribution="normal"
         ),
@@ -32,7 +33,7 @@ def _model(migration):
             net=[migration.get_net("p_x_z1"),
                  Unflatten(1, data_params.shape),
                  FixedStdDev(0.4)],
-            input_id="z",
+            input_id="hiddens",
             output_distribution="normal"
         ),
     )
@@ -44,10 +45,54 @@ def _model(migration):
     return __model
 
 
+def chainVAE_loss(targets: torch.tensor, distributions: list, **kwargs) -> dict:
+    from src.elements.losses import get_kl_loss
+    kl_divergence = get_kl_loss()
+
+    beta1 = 1
+    beta2 = 1
+
+    q_z1_x =    distributions[0][0]
+    z1_sample = q_z1_x.sample()
+    p_z2_z1 =   distributions[1][0]
+    q_z2_z1 =   distributions[1][1]
+    p_z1_z2 =   distributions[2][0]
+    p_x_z1 =    distributions[3][0]
+
+    nll = torch.mean(-p_x_z1.log_prob(targets))
+
+    avg_var_prior_losses = []
+
+    reg1 = torch.mean(-q_z1_x.entropy())
+    reg1 += torch.mean(-p_z1_z2.log_prob(z1_sample))
+    reg1 *= beta1
+
+    kl2, avg_kl2 = kl_divergence(q_z2_z1, p_z2_z1)
+    kl2 = torch.mean(kl2)
+    kl2 *= beta2
+
+    kl_div = reg1 + kl2
+    elbo = nll + kl_div
+
+    return dict(
+        elbo=elbo,
+        reconstruction_loss=nll,
+        avg_reconstruction_loss=nll,
+        kl_div=kl_div,
+        avg_var_prior_losses=avg_var_prior_losses,
+    )
+
+
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
 from src.hparams import Hyperparams
+
+migration_params = Hyperparams(
+    params=dict(
+        path="migration/ChainVAE_migration/weights/TD_comparison_40"
+    )
+)
 
 """
 --------------------
@@ -70,7 +115,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-27__23-22/checkpoints/checkpoint-450.pth',
+    load_from_eval='migration/2023-09-11__13-29/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
@@ -200,7 +245,7 @@ LOSS HYPERPARAMETERS
 loss_params = Hyperparams(
     reconstruction_loss="default",
     kldiv_loss="default",
-    custom_loss=None,
+    custom_loss=chainVAE_loss,
 
     # ELBO beta warmup (from NVAE).
     # Doesn't make much of an effect

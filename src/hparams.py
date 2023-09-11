@@ -2,7 +2,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.ChainVAE_migrate as params
+    import models.EfficientVDVAE_migrate as params
 
     return Hyperparams(
         log_params=params.log_params,
@@ -13,6 +13,9 @@ def get_hparams():
         loss_params=params.loss_params,
         eval_params=params.eval_params,
         synthesis_params=params.synthesis_params,
+
+        migration_params=params.migration_params
+        if hasattr(params, 'migration_params') else None,
 
         mlp_params=params.mlp_params,
         conv_params=params.cnn_params,
@@ -48,3 +51,27 @@ class Hyperparams:
     def __getitem__(self, item):
         return self.config[item]
 
+    def to_json(self):
+        from types import FunctionType
+        from data.textures.textures import TexturesDataset
+        def convert_to_json_serializable(obj):
+            if isinstance(obj, Hyperparams):
+                return convert_to_json_serializable(obj.config)
+            if isinstance(obj, (list, tuple)):
+                return [convert_to_json_serializable(item) for item in obj]
+            if isinstance(obj, dict):
+                return {key: convert_to_json_serializable(value) for key, value in obj.items()}
+            if callable(obj) or isinstance(obj, FunctionType):
+                return str(obj)
+            if isinstance(obj, TexturesDataset):
+                return str(obj)
+            return obj
+
+        json_serializable_config = convert_to_json_serializable(self.config)
+        return json_serializable_config
+
+    @classmethod
+    def from_json(cls, json_str):
+        import json
+        data = json.loads(json_str)
+        return cls(**data)

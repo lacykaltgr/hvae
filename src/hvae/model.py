@@ -15,7 +15,7 @@ from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
 from src.utils import tensorboard_log, get_variate_masks, write_image_to_disk, linear_temperature, \
-    prepare_for_log, print_line
+    prepare_for_log, print_line, log_to_csv
 
 prms = get_hparams()
 device = prms.model_params.device
@@ -39,9 +39,8 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
     """
     # Use custom loss funtion if provided
     if prms.loss_params.custom_loss is not None:
-        return prms.loss_params.custom_loss(targets=targets, predictions=logits,
+        return prms.loss_params.custom_loss(targets=targets, logits=logits,
                                             distributions=distributions, step_n=step_n)
-
 
     output_distribution = distributions[-1][0]
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
@@ -332,6 +331,7 @@ def train(net,
                          ('N° active groups', train_results["n_active_groups"]),
                          ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
                          ('GradSkipCount', gradient_skip_counter),))
+            log_to_csv(train_results, checkpoint_path, 'train')
 
             """
             EVALUATION AND CHECKPOINTING
@@ -348,11 +348,13 @@ def train(net,
                 logger.info(
                     f'Train Stats for global_step {global_step} | NELBO {train_results["elbo"]} | 'f'SSIM: {train_ssim}')
                 val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger)
+                val_results = prepare_for_log(val_results)
+                log_to_csv(val_results, checkpoint_path, 'val')
                 # Tensorboard logging
                 logger.info('Logging to Tensorboard..')
                 tensorboard_log(net, optimizer, global_step,
                                 tb_writer_train, train_results,
-                                train_outputs, train_inputs, global_norm=global_norm)
+                                train_outputs, train_inputs)
                 tensorboard_log(net, optimizer, global_step,
                                 tb_writer_val, val_results,
                                 val_outputs, val_inputs, mode='val')

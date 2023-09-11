@@ -156,7 +156,6 @@ class TopSimpleBlock(SimpleBlock):
     """
     Top block of the model
     Constant or trainable prior
-    Posterior is conditioned on the condition
     """
     def __init__(self, net,
                  prior_shape: tuple,
@@ -420,7 +419,8 @@ class TopGenBlock(GenBlock):
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
             # constant tensor with 0 values
-            self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False)
+            self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False) \
+                if prior_data is None else prior_data
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
         y_prior = self.prior_net(y)

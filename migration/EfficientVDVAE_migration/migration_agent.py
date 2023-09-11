@@ -31,91 +31,113 @@ class EfficientVDVAEMigrationAgent:
             skip_projections_weights, input_conv_weights, output_conv_weights, trainable_h_weights, \
             pool_weights, unpool_weights = self.process_checkpoint(checkpoint['model_state_dict'])
 
-
         print("Processed checkpoint, loaded weights.")
         # for i in range(len(checkpoint["model_state_dict"].keys())):
         #    print(list(checkpoint["model_state_dict"].values())[i].shape)
         # return
-        """
+
         levels_up_i = 0
         for level in levels_up:
-            for net in level.modules():
-                print(len(levels_up_weights))
-                print(len(net))
-                for layer, weight_dict in zip(net.modules(), levels_up_weights[levels_up_i]):
-                    layer.weight.copy_(torch.tensor(weight_dict['w']).T)
+            for net in level:
+                for layer, weight_dict in zip(list(filter(lambda x: hasattr(x, "weight"), net.convs)),
+                                              levels_up_weights[levels_up_i]):
+                    layer.weight.copy_(torch.tensor(weight_dict['w']))
                     layer.bias.copy_(torch.tensor(weight_dict['b']))
                 levels_up_i += 1
 
         print("Loaded weights for levels_up.")
-        
-        """
 
-        levels_up_downsample_i = 0
-        for level in levels_up_downsample:
-            for net in level:
-                for layer, weight_dict in zip(net.convs, levels_up_downsample_weights[levels_up_downsample_i]):
-                    if hasattr(layer, 'weight'):
-                        print(layer.weight.shape)
-                        print(weight_dict['w'].shape)
-                        #self._set_weight_bias(layer, weight_dict)
-                levels_up_downsample_i += 1
+        with torch.no_grad():
+            levels_up_downsample_i = 0
+            for level in levels_up_downsample:
+                for net in level:
+                    for layer, weight_dict in zip(list(filter(lambda x: hasattr(x, "weight"), net.convs)),
+                                                  levels_up_downsample_weights[levels_up_downsample_i]):
+                        layer.weight.copy_(weight_dict['w'])
+                        layer.bias.copy_(weight_dict['b'])
+                    levels_up_downsample_i += 1
 
-        print("Loaded weights for levels_up_downsample.")
+            print("Loaded weights for levels_up_downsample.")
 
-        levels_down_i = 0
-        for level in levels_down:
-            for step in level:
-                for net_name, net in step.items():
+
+            levels_down_i = 0
+            for level in levels_down:
+                for step in level:
+                    for net_name, net in step.items():
+                        if net_name == 'unpool':
+                            unpool_layers.extend([net])
+                            continue
+                        if isinstance(levels_down_weights[levels_down_i][net_name], list):
+                            for subnet in net:
+                                for layer, weight_dict in zip(list(filter(lambda x: hasattr(x, "weight"), subnet.convs)),
+                                                              levels_down_weights[levels_down_i][net_name]):
+                                    layer.weight.copy_(weight_dict['w'])
+                                    layer.bias.copy_(weight_dict['b'])
+                        elif isinstance(levels_down_weights[levels_down_i][net_name], dict):
+                            net.weight.copy_(levels_down_weights[levels_down_i][net_name]['w'])
+                            net.bias.copy_(levels_down_weights[levels_down_i][net_name]['b'])
+                        else:
+                            raise NotImplementedError()
+                    levels_down_i += 1
+
+            print("Loaded weights for levels_down.")
+
+            levels_down_upsample_i = 0
+            for level in levels_down_upsample:
+                for net_name, net in level.items():
                     if net_name == 'unpool':
                         unpool_layers.extend([net])
                         continue
-                    for layer, weight_dict in zip(net.modules(), levels_down_weights[levels_down_i][net_name]):
-                        self._set_weight_bias(layer, weight_dict)
-                    levels_down_i += 1
-
-        print("Loaded weights for levels_down.")
-
-        levels_down_upsample_i = 0
-        for level in levels_down_upsample:
-            for net_name, net in level.items():
-                if net_name == 'unpool':
-                    unpool_layers.extend([net])
-                    continue
-                for layer, weight_dict in zip(net.modules(),
-                                              levels_down_upsample_weights[levels_down_upsample_i][net_name]):
-                    self._set_weight_bias(layer, weight_dict)
+                    if isinstance(levels_down_upsample_weights[levels_down_upsample_i][net_name], list):
+                        for subnet in net:
+                            for layer, weight_dict in zip(list(filter(lambda x: hasattr(x, "weight"), subnet.convs)),
+                                                          levels_down_upsample_weights[levels_down_upsample_i][net_name]):
+                                layer.weight.copy_(weight_dict['w'])
+                                layer.bias.copy_(weight_dict['b'])
+                    elif isinstance(levels_down_upsample_weights[levels_down_upsample_i][net_name], dict):
+                        net.weight.copy_(levels_down_upsample_weights[levels_down_upsample_i][net_name]['w'])
+                        net.bias.copy_(levels_down_upsample_weights[levels_down_upsample_i][net_name]['b'])
+                    else:
+                        raise NotImplementedError()
                 levels_down_upsample_i += 1
 
-        print("Loaded weights for levels_down_upsample.")
+            print("Loaded weights for levels_down_upsample.")
 
-        for net, weight_dict in zip(skip_projections.modules(), skip_projections_weights):
-            self._set_weight_bias(net, weight_dict)
+            for net, weight_dict in zip(skip_projections, skip_projections_weights):
+                net.weight.copy_(weight_dict['w'])
+                net.bias.copy_(weight_dict['b'])
 
-        print("Loaded weights for skip_projections.")
+            print("Loaded weights for skip_projections.")
 
-        self._set_weight_bias(input_conv, input_conv_weights)
+            input_conv.weight.copy_(input_conv_weights['w'])
+            input_conv.bias.copy_(input_conv_weights['b'])
 
-        print("Loaded weights for input_conv.")
+            print("Loaded weights for input_conv.")
 
-        self._set_weight_bias(output_conv, output_conv_weights)
+            output_conv.weight.copy_(output_conv_weights['w'])
+            output_conv.bias.copy_(output_conv_weights['b'])
 
-        print("Loaded weights for output_conv.")
+            print("Loaded weights for output_conv.")
 
-        trainable_h.data.copy_(torch.tensor(trainable_h_weights))
+            trainable_h.data.copy_(trainable_h_weights)
 
-        print("Loaded weights for trainable_h.")
+            print("Loaded weights for trainable_h.")
 
-        for layer, weight_dict in zip(pool_layers.modules(), pool_weights):
-            self._set_weight_bias(layer, weight_dict)
+            for net, weight_dict in zip(pool_layers, pool_weights):
+                for layer in net.ops:
+                    if hasattr(layer, "weight"):
+                        layer.weight.copy_(weight_dict['w'])
+                        layer.bias.copy_(weight_dict['b'])
+                        break
 
-        print("Loaded weights for pool_layers.")
+            print("Loaded weights for pool_layers.")
 
-        for layer, weight_dict in zip(unpool_layers.modules(), unpool_weights):
-            layer.scale_bias.copy_(torch.tensor(weight_dict['scale_bias']))
-            self._set_weight_bias(layer, weight_dict)
+            for layer, weight_dict in zip(unpool_layers, unpool_weights):
+                layer.scale_bias.copy_(torch.tensor(weight_dict['scale_bias']))
+                layer.weight.copy_(weight_dict['w'])
+                layer.bias.copy_(weight_dict['b'])
 
-        print("Loaded weights for unpool_layers.")
+            print("Loaded weights for unpool_layers.")
 
         self.levels_up = levels_up
         self.levels_up_downsample = levels_up_downsample
@@ -153,13 +175,6 @@ class EfficientVDVAEMigrationAgent:
             i += 2
         return in_block, i
 
-    def _set_weight_bias(self, layer, weight_dict):
-        layer.weight.requires_grad = False
-        layer.bias.requires_grad = False
-        layer.weight.copy_(torch.tensor(weight_dict['w']).mT)
-        layer.bias.copy_(torch.tensor(weight_dict['b']))
-        layer.weight.requires_grad = True
-        layer.bias.requires_grad = True
 
     def process_checkpoint(self, state):
         keys = list(state.keys())
@@ -183,6 +198,7 @@ class EfficientVDVAEMigrationAgent:
         while i < len(keys):
             split = keys[i].split(".")  # bottom_up, levels_up_downsample 0, residual_block, 0, convs, 1, weight
             if 'unpool' in split:
+                # TODO
                 print(split)
             if split[0] == "bottom_up":
                 if split[1] == "levels_up_downsample":
@@ -266,7 +282,7 @@ class EfficientVDVAEMigrationAgent:
                     )
                     i += 2
                 elif split[top_down_number] == 'z_projection':
-                    top_down_block['posterior_layer'] = dict(
+                    top_down_block['z_projection'] = dict(
                         w=values[i],
                         b=values[i + 1]
                     )
@@ -378,7 +394,7 @@ class EfficientVDVAEMigrationAgent:
                 strides=stride,
                 skip_filters=self.hparams.model.up_skip_filters[::-1][i],
                 latent_variates=self.hparams.model.down_latent_variates[i],
-                first_block=i == 0,
+                first_block= i == 0,
                 last_block=False
             )])
 
@@ -483,8 +499,8 @@ class EfficientVDVAEMigrationAgent:
             unpool=unpool,
             residual_block=residual_block,
             prior_net=prior_net,
-            posterior_layer=posterior_net,
+            posterior_net=posterior_net,
             z_projection=z_projection,
-            prior_projection=prior_projection,
-            posterior_projection=posterior_projection
+            prior_layer=prior_projection,
+            posterior_layer=posterior_projection
         )

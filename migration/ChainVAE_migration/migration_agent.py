@@ -12,7 +12,7 @@ class ChainVAEMigrationAgent:
         self.directory = path
         configs_path = os.path.join(self.directory, "configs.json")
         if os.path.isfile(configs_path):
-            print ("Loading experiment configs...")
+            print("Loading experiment configs...")
             with open(configs_path) as configs_json:
                 self.config = json.load(configs_json)
 
@@ -50,7 +50,6 @@ class ChainVAEMigrationAgent:
         if activation == "softplus":
             activation = torch.nn.Softplus()
 
-
         net: shared_NN = self.model.__getattribute__(net_name + "_model")
 
         migrated_net = MLPNet(
@@ -61,20 +60,16 @@ class ChainVAEMigrationAgent:
             activate_output=False
         )
 
-        layer_i = len(migrated_net.mlp_layers) - 1
+        weight_i = 2
         with torch.no_grad():
-            for layer in migrated_net.mlp_layers[:-1]:
+            for layer in migrated_net.mlp_layers.modules():
                 if isinstance(layer, torch.nn.Linear):
-                    print(layer.weight.shape, tf.transpose(net.weights[layer_i-1]).shape)
-                    print(layer.bias.shape, net.weights[layer_i].shape)
-                    #layer.weight.copy_(torch.tensor(layers[layer_i]['w']).mT)
-                    #layer.bias.copy_(torch.tensor(layers[layer_i]['b']))
-                    layer_i -= 2
+                    if weight_i == len(net.weights)-1:
+                        weight_i = 0
+                    layer.weight.copy_(torch.tensor(net.weights[weight_i].numpy()).mT)
+                    layer.bias.copy_(torch.tensor(net.weights[weight_i+1].numpy()))
+                    weight_i += 2
         return migrated_net
-
-
-
-
 
     def get_optimizer(self):
         return None

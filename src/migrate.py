@@ -6,17 +6,12 @@ from src.utils import load_experiment_for
 from src.checkpoint import Checkpoint
 
 
-# Migration Agent
-from migration.ChainVAE_migration.migration_agent import ChainVAEMigrationAgent as MIGRATION_AGENT
-
-
 def main():
     _, save_path = load_experiment_for('migration')
     p = get_hparams()
+    m = p.migration_params
 
-    migration = MIGRATION_AGENT(
-        path="migration/ChainVAE_migration/weights/TD_comparison_40",
-    )
+    migration = m.migration_agent(**m.params)
 
     model = p.model_params.model(migration)
     global_step = migration.get_global_step()

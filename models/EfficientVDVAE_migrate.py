@@ -116,6 +116,16 @@ def _model(migration):
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
+from migration.EfficientVDVAE_migration.migration_agent import EfficientVDVAEMigrationAgent
+migration_params = Hyperparams(
+    params=dict(
+        path="migration/EfficientVDVAE_migration/weights_imagenet",
+        weights_filename="checkpoints-imagenet32_baseline",
+        config_filename="hparams-imagenet32_baseline"
+    ),
+    migration_agent=EfficientVDVAEMigrationAgent,
+)
+
 """
 --------------------
 LOGGING HYPERPARAMETERS

@@ -128,7 +128,6 @@ class GammaSchedule:
         self.max_steps = max_steps
         self.num_groups = num_groups
         self.scaled_gamma = scaled_gamma
-        # TODO:= sum(model.down_n_blocks_per_res) + len(model.down_strides) ??
 
     def __call__(self, kl_losses, avg_kl_losses, step_n, epsilon=0.):
         avg_kl_losses = torch.stack(avg_kl_losses, dim=0) * np.log(2)  # [n]
