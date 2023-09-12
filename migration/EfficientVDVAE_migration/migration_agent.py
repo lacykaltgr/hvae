@@ -6,7 +6,7 @@ import torch
 from .read_hparams.hparams import HParams
 from src.utils import SerializableSequential as Sequential
 from src.elements.nets import ConvNet
-from src.elements.layers import PoolLayer, UnpooLayer
+from src.elements.layers import PoolLayer, UnpooLayer, Conv2d
 
 
 class EfficientVDVAEMigrationAgent:
@@ -123,19 +123,29 @@ class EfficientVDVAEMigrationAgent:
 
             print("Loaded weights for trainable_h.")
 
-            for net, weight_dict in zip(pool_layers, pool_weights):
-                for layer in net.ops:
-                    if hasattr(layer, "weight"):
-                        layer.weight.copy_(weight_dict['w'])
-                        layer.bias.copy_(weight_dict['b'])
-                        break
+            pool_i = 0
+            for net in pool_layers:
+                if net is not None:
+                    for layer in net.ops:
+                        if hasattr(layer, "weight"):
+                            layer.weight.copy_(pool_weights[pool_i]['w'])
+                            layer.bias.copy_(pool_weights[pool_i]['b'])
+                            break
+                    pool_i += 1
 
             print("Loaded weights for pool_layers.")
 
-            for layer, weight_dict in zip(unpool_layers, unpool_weights):
-                layer.scale_bias.copy_(torch.tensor(weight_dict['scale_bias']))
-                layer.weight.copy_(weight_dict['w'])
-                layer.bias.copy_(weight_dict['b'])
+            unpool_i = 0
+            for net in unpool_layers:
+                if net is not None:
+                    net.scale_bias = nn.Parameter(
+                        unpool_weights[unpool_i]['scale_bias'], requires_grad=True)
+                    for layer in net.ops:
+                        if hasattr(layer, "weight"):
+                            layer.weight.copy_(unpool_weights[unpool_i]['w'])
+                            layer.bias.copy_(unpool_weights[unpool_i]['b'])
+                            break
+                    unpool_i += 1
 
             print("Loaded weights for unpool_layers.")
 
@@ -197,10 +207,10 @@ class EfficientVDVAEMigrationAgent:
         i = 0
         while i < len(keys):
             split = keys[i].split(".")  # bottom_up, levels_up_downsample 0, residual_block, 0, convs, 1, weight
-            if 'unpool' in split:
-                # TODO
-                print(split)
             if split[0] == "bottom_up":
+                if 'pool' in split:
+                    # TODO
+                    print(split)
                 if split[1] == "levels_up_downsample":
 
                     if split[3] == "residual_block":
@@ -315,7 +325,7 @@ class EfficientVDVAEMigrationAgent:
 
         levels_up = nn.ModuleList([])
         levels_up_downsample = nn.ModuleList([])
-        pool_layers = nn.ModuleList([])
+        pool_layers = list()
         skip_projections = nn.ModuleList([])
 
         for i, stride in enumerate(self.hparams.model.up_strides):
@@ -352,19 +362,22 @@ class EfficientVDVAEMigrationAgent:
                 )
                 for _ in range(self.hparams.model.up_n_blocks[i])])])
 
-            pool_layers.extend([PoolLayer(
-                in_filters=in_channels_up[i],
-                filters=self.hparams.model.up_filters[i],
-                strides=stride
-            )])
+            if stride > 1:
+                pool_layers.append(PoolLayer(
+                    in_filters=in_channels_up[i],
+                    filters=self.hparams.model.up_filters[i],
+                    strides=stride
+                ))
+            else:
+                pool_layers.append(None)
 
-            skip_projections.extend([nn.Conv2d(
+            skip_projections.extend([Conv2d(
                 in_channels=in_channels_up[i], out_channels=self.hparams.model.up_skip_filters[i], kernel_size=(1, 1),
                 stride=(1, 1),
                 padding='same'
             )])
 
-        input_conv = nn.Conv2d(in_channels=self.hparams.data.channels,
+        input_conv = Conv2d(in_channels=self.hparams.data.channels,
                                out_channels=self.hparams.model.input_conv_filters,
                                kernel_size=self.hparams.model.input_kernel_size,
                                stride=(1, 1),
@@ -414,7 +427,7 @@ class EfficientVDVAEMigrationAgent:
                                self.hparams.model.down_n_blocks_per_res[i] - 1)
                     for j in range(self.hparams.model.down_n_blocks_per_res[i])]])
 
-        output_conv = nn.Conv2d(in_channels=self.hparams.model.down_filters[-1],
+        output_conv = Conv2d(in_channels=self.hparams.model.down_filters[-1],
                                 out_channels=1 if self.hparams.data.dataset_source == 'binarized_mnist'
                                 else self.hparams.model.num_output_mixtures * (3 * self.hparams.data.channels + 1),
                                 kernel_size=self.hparams.model.output_kernel_size,
@@ -434,7 +447,7 @@ class EfficientVDVAEMigrationAgent:
         else:
             unpool = None
 
-        residual_block = nn.Sequential(*[
+        residual_block = Sequential(*[
             ConvNet(
                 n_layers=n_layers,
                 in_filters=in_filters,
@@ -447,7 +460,7 @@ class EfficientVDVAEMigrationAgent:
             ) for _ in range(n_blocks)
         ])
 
-        posterior_net = nn.Sequential(ConvNet(
+        posterior_net = Sequential(ConvNet(
             n_layers=n_layers,
             in_filters=in_filters + skip_filters,
             bottleneck_ratio=bottleneck_ratio * 0.5,
@@ -458,7 +471,7 @@ class EfficientVDVAEMigrationAgent:
             output_ratio=0.5  # Assuming skip_filters == in_filters
         ))
 
-        prior_net = nn.Sequential(ConvNet(
+        prior_net = Sequential(ConvNet(
             n_layers=n_layers,
             in_filters=in_filters,
             bottleneck_ratio=bottleneck_ratio,
@@ -469,7 +482,7 @@ class EfficientVDVAEMigrationAgent:
             output_ratio=2.0
         ))
 
-        prior_projection = nn.Conv2d(
+        prior_projection = Conv2d(
             in_channels=in_filters,
             out_channels=latent_variates * 2,
             kernel_size=(1, 1),
@@ -477,7 +490,7 @@ class EfficientVDVAEMigrationAgent:
             padding='same'
         )
 
-        posterior_projection = nn.Conv2d(
+        posterior_projection = Conv2d(
             in_channels=in_filters,
             out_channels=latent_variates * 2,
             kernel_size=(1, 1),
@@ -485,7 +498,7 @@ class EfficientVDVAEMigrationAgent:
             padding='same'
         )
 
-        z_projection = nn.Conv2d(
+        z_projection = Conv2d(
             in_channels=latent_variates,
             out_channels=filters,
             kernel_size=(1, 1),

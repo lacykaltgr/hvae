@@ -7,7 +7,7 @@ def _model(migration):
 
     _blocks = OrderedDict()
     _blocks.update({
-        'x': InputBlock(net=migration.input_conv, )
+        'x': InputBlock(net=migration.input_conv)
     })
     level_up_count = 0
     level_n = -1
@@ -21,14 +21,16 @@ def _model(migration):
                         input_id='x' if i == 0 and level_n == 0 else
                                  f'level_up_downsample_{i-1}_pool' if level_n == 0 else
                                  f'level_up_{level_up_count-1}'
-                    ),
-                f'level_up_{level_up_count}_pool':
-                    SimpleBlock(
-                        net=migration.pool_layers[pool_layer_count],
-                        input_id=f'level_up_{level_up_count}'
-                    )}
-            )
-            pool_layer_count += 1
+                    )
+            })
+            if migration.pool_layers[pool_layer_count] is not None:
+                _blocks.update({
+                    f'level_up_downsample_{i}':
+                        SimpleBlock(
+                            net=migration.pool_layers[pool_layer_count],
+                            input_id=f'level_up_{level_up_count}'
+                        )})
+                pool_layer_count += 1
             level_up_count += 1
 
         _blocks.update({
@@ -38,15 +40,18 @@ def _model(migration):
                     input_id='x' if i == 0 and level_n == 0 else
                              f'level_up_{level_up_count}_pool' if level_n != -1 else
                              f'level_up_downsample_{i-1}_pool'
-                ),
-            f'level_up_{level_up_count}_pool':
-                SimpleBlock(
-                    net=migration.pool_layers[pool_layer_count],
-                    input_id=f'level_up_{level_up_count}'
-                )}
-        )
+        )})
+
+        if migration.pool_layers[pool_layer_count] is not None:
+            _blocks.update({
+                f'level_up_{level_up_count}_pool':
+                    SimpleBlock(
+                        net=migration.pool_layers[pool_layer_count],
+                        input_id=f'level_up_{level_up_count}'
+                    )})
+            pool_layer_count += 1
+
         level_up_count += 1
-        pool_layer_count += 1
 
     _blocks.update({'top': TopSimpleBlock(
         net=None,
@@ -59,14 +64,17 @@ def _model(migration):
     unpool_layer_count = -1
     for i, (levels_down, level_down_upsample) in enumerate(zip(migration.levels_down, migration.levels_down_upsample)):
         for level_n, level_down in enumerate(levels_down):
+            if migration.unpool_layers[unpool_layer_count] is not None:
+                _blocks.update({
+                    f'level_down_{level_down_count}_unpool':
+                        SimpleBlock(
+                            net=migration.unpool_layers[unpool_layer_count],
+                            input_id='top' if i == 0 and level_n == 0 else
+                                     f'level_down_{level_down_count}' if level_n != 0 else
+                                     f'level_down_upsample_{i-1}'
+                        )})
+                unpool_layer_count += 1
             _blocks.update({
-                f'level_down_{level_down_count}_unpool':
-                    SimpleBlock(
-                        net=migration.unpool_layers[unpool_layer_count],
-                        input_id='top' if i == 0 and level_n == 0 else
-                                 f'level_down_{level_down_count}' if level_n != 0 else
-                                 f'level_down_upsample_{i-1}'
-                    ),
                 f'level_down_{level_down_count}':
                     ResidualGenBlock(
                         net=level_down["residual_block"],
@@ -80,14 +88,17 @@ def _model(migration):
             )
             level_down_count += 1
             level_up_count -= 1
+
+        if migration.unpool_layers[unpool_layer_count] is not None:
+            _blocks.update({
+                f'level_down_{level_down_count}_unpool':
+                    SimpleBlock(
+                        net=migration.unpool_layers[unpool_layer_count],
+                        input_id=f'level_down_upsample_{level_down_count}'
+                    )})
             unpool_layer_count += 1
 
         _blocks.update({
-            f'level_down_{level_down_count}_unpool':
-                SimpleBlock(
-                    net=migration.unpool_layers[unpool_layer_count],
-                    input_id=f'level_down_upsample_{level_down_count}'
-                ),
             f'level_down_{level_down_count}':
                 ResidualGenBlock(
                     net=level_down_upsample["residual_block"],
@@ -99,10 +110,13 @@ def _model(migration):
                 )})
         level_down_count += 1
         level_up_count -= 1
-        unpool_layer_count += 1
 
     _blocks.update({
-        'x_hat': OutputBlock(net=migration.output_conv, )})
+        'x_hat': OutputBlock(
+            net=migration.output_conv,
+            input_id=f'level_down_{level_down_count-1}',
+            output_distribution='mol'
+        )})
 
     __model = hvae(
         blocks=_blocks,

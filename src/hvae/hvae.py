@@ -42,6 +42,8 @@ class Generator(nn.Module):
         assert len(variate_masks) == len(self.blocks)
 
         for block, variate_mask in zip(self.blocks.values(), variate_masks):
+            if block.output in computed.keys():
+                continue
             args = dict(computed=computed, variate_mask=variate_mask) \
                 if isinstance(block, GenBlock) else dict(computed=computed)
             output = block(**args)
@@ -92,14 +94,19 @@ class hVAE(nn.Module):
         self.generator: Generator = Generator(generator_blocks)
 
     def compute_function(self, block_name) -> (tensor, dict):
-        def compute(x: tensor) -> (tensor, dict):
-            computed, _ = self.encoder(x, to_compute=block_name)
+        def compute(x: tensor or dict) -> (tensor, dict):
+            if isinstance(x, dict):
+                computed = x
+            else:
+                computed = self.input_block(x)
+            computed, distributions = self.encoder(computed, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
-            computed, _ = self.generator(computed, to_compute=block_name)
+            computed, _ = self.generator(computed, distributions, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
-            return None
+            output_sample, computed, _ = self.output_block(computed)
+            return output_sample
 
         return compute
 

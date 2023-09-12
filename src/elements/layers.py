@@ -35,7 +35,6 @@ class Interpolate(SerializableModule):
 class UnpooLayer(SerializableModule):
     def __init__(self, in_filters, filters, strides):
         super(UnpooLayer, self).__init__()
-        self.scale_bias = None
         self.filters = filters
 
         if isinstance(strides, int):
@@ -173,9 +172,7 @@ class EinsumLayer(SerializableModule):
         return EinsumLayer(**serialized["params"])
 
 
-
-
-class Conv2d(nn.Conv2d):
+class Conv2d(nn.Conv2d, SerializableModule):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding='same', dilation=1):
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size,) * 2
@@ -220,6 +217,22 @@ class Conv2d(nn.Conv2d):
         init.xavier_uniform_(self.weight)
         if self.bias is not None:
             init.zeros_(self.bias)
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return Conv2d(**serialized["params"])
 
 
 class Flatten(torch.nn.Flatten, SerializableModule):
