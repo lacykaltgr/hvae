@@ -16,12 +16,12 @@ class Encoder(nn.Module):
 
     def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
         computed = x
-        distributions = []
+        distributions = dict()
         for block in self.blocks.values():
             output = block(computed)
             if isinstance(output, tuple):
                 computed, dists = output
-                distributions.append(dists)
+                distributions[block.output] = dists
             else:
                 computed = output
             if to_compute is not None and to_compute in computed:
@@ -34,7 +34,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.blocks: nn.ModuleDict = blocks
 
-    def forward(self, computed: dict, distributions: list, variate_masks: list = None, to_compute: str = None) \
+    def forward(self, computed: dict, distributions: dict, variate_masks: list = None, to_compute: str = None) \
             -> (tensor, dict, list):
 
         if variate_masks is None:
@@ -49,7 +49,7 @@ class Generator(nn.Module):
             output = block(**args)
             if isinstance(output, tuple):
                 computed, dists = output
-                distributions.append(dists)
+                distributions[block.output] = dists
             else:
                 computed = output
             if to_compute is not None and to_compute in computed:
@@ -165,12 +165,12 @@ class hVAE(nn.Module):
         output_sample, computed = self.output_block.sample_from_prior(computed)
         return output_sample, computed
 
-    def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, list):
+    def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, dict):
         computed = self.input_block(x)
         computed, distributions = self.encoder(computed)
         computed, distributions = self.generator(computed, distributions, variate_masks)
         output_sample, computed, output_distribution = self.output_block(computed)
-        distributions.append(output_distribution)
+        distributions['output'] = output_distribution
         return output_sample, computed, distributions
 
     # TODO

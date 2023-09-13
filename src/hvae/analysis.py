@@ -11,114 +11,69 @@ import torch
 from torch import nn
 
 from src.utils import NumpyEncoder
+from src.hparams import get_hparams
+from torch.utils.data import Dataset, DataLoader
 
 NUM_TEXT_FAMILY = 5
 
 
-def get_Z_for_dataset(model, dataset, filter_dict=None):
-    texture_z1 = []
-    texture_z2 = []
-    texture_label = []
+class Decodability_dataset(Dataset):
+    def __init__(self, X, Y):
+        self.X = X
+        self.Y = Y
 
-    for idx, batch in enumerate(dataset):
-        # Mean ???
-        X = batch[0]
-        y = batch[1]
-        z1 = model.q_z1_x_model(X).mean().numpy()
-        z2 = model.q_z2_z1_model(z1).mean().numpy()
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
 
-        if filter_dict:
-            z1 = z1[:, filter_dict['filter_dims']]
-
-        texture_z1.append(z1)
-        texture_z2.append(z2)
-        texture_label.append(y)
-
-    Z1 = np.concatenate(texture_z1)
-    Z2 = np.concatenate(texture_z2)
-    y = np.concatenate(texture_label)
-    return Z1, Z2, y
+    def __len__(self):
+        return len(self.X)
 
 
-def get_log_reg_model(X_train, y_train, X_test, y_test):
-    y_train_p = torch.eye(NUM_TEXT_FAMILY)[y_train]
-    y_test_p = torch.eye(NUM_TEXT_FAMILY)[y_test]
-
-    number_of_features = X_train.shape[1]
-    number_of_classes = y_test_p.shape[1]
-
-    model = TextureDecodingModel(number_of_features, number_of_classes)
-    model.compile(optimizer=torch.optim.Adam, loss=nn.BCELoss(), metrics=["accuracy"])
-
-    model.fit(X_train, y_train_p, epochs=1, validation_data=(X_test, y_test_p))
-    accuracy = model.evaluate(X_test, y_test_p, return_dict=True)["accuracy"]
-    return model, accuracy
-
-def decodability(model, image_size=20, filter_dict=None):
-    Z1_train, Z2_train, y_train, Z1_test, Z2_test, y_test = get_Z_data(model, image_size=image_size, filter_dict=filter_dict)
-    Z1_model, Z1_accuracy = get_log_reg_model(Z1_train, y_train, Z1_test, y_test)
-    Z2_model, Z2_accuracy = get_log_reg_model(Z2_train, y_train, Z2_test, y_test)
-
-    return Z1_model, Z1_accuracy, Z2_model, Z2_accuracy
+def decodability_model(decodability_model, optimizer, loss, epochs, batch_size, dataset):
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    accuracy = []
+    # calculate model accuracy
+    for epoch in range(epochs):
+        for batch in dataloader:
+            X, Y = batch
+            optimizer.zero_grad()
+            output = decodability_model(X)
+            loss = loss(output, Y)
+            loss.backward()
+            optimizer.step()
+    return accuracy
 
 
-def scrambling_decodability(model, filters, non_filters):
-    class Model_flow (nn.Module):
-        def __init__(self, original_model, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.original_model = original_model
+def decodability(model, labeled_loader, filter_dict=None):
+    p = get_hparams()
+    decode_from_list = p.synthesis_params.decodability.decode_from
+    X = {layer: [] for layer in decode_from_list}
+    Y = []
+    for batch in labeled_loader:
+        inp, label = batch
+        _, _, distributions = model(inp)
+        for decode_from in decode_from_list:
+            X[decode_from].append(distributions[decode_from].mean.numpy())
+            Y.append(label)
+    Y = np.concatenate(Y, axis=0)
 
-        def forward(self, input):
-            x = self.original_model.p_x_z1_model(input).mean()
-            z1 = self.original_model.q_z1_x_model(x).mean()
-            z2 = self.original_model.q_z2_z1_model(z1).mean()
-            return z2
+    accuracies = []
+    for decode_from in decode_from_list:
+        X[decode_from] = np.concatenate(X[decode_from], axis=0)
+        num_input_dims = X[decode_from].shape[1]
+        num_classes = Y.shape[1]
+        decodability_model = p.synthesis_params.decodability.model(num_input_dims, num_classes)
+        decodability_dataset = Decodability_dataset(X[decode_from], Y)
+        optimizer = p.synthesis_params.decodability.optimizer(
+            decodability_model.parameters(), lr=p.synthesis_params.decodability.learning_rate)
+        loss = p.synthesis_params.decodability.loss()
+        accuracy = decodability_model(decodability_model, optimizer, loss, p.synthesis_params.decodability.epochs,
+                                             p.synthesis_params.decodability.batch_size, decodability_dataset)
+        accuracies.append((decode_from, accuracy))
 
-    model_flow = Model_flow(model)
-
-    Z1_train, Z2_train, y_train, Z1_test, Z2_test, y_test = get_Z_data(model)
-
-    scrambled_Z1_train = np.zeros(Z1_train.shape,dtype=np.float16)
-    scrambled_Z1_test = np.zeros(Z1_test.shape,dtype=np.float16)
-
-    print("Scrambling train set")
-    for i in range(Z1_train.shape[0]):
-        filter_values = Z1_train[i, filters]
-        np.random.shuffle(filter_values)
-
-        scrambled_Z1_train[i, filters] = filter_values.astype(np.float16)
-        scrambled_Z1_train[i, non_filters] = Z1_train[i, non_filters].astype(np.float16)
-
-    print(scrambled_Z1_train.shape)
-    print("Predicting Z2 train")
-    split_Z1 = np.array_split(scrambled_Z1_train, 20, axis=0)
-    Z2_train_split = []
-
-    for chunk in tqdm.tqdm(split_Z1):
-        Z2_train_split.append(model_flow(chunk))
-
-    Z2_train = np.concatenate(Z2_train_split)
-
-    print("Scrambling test set")
-
-    for i in range(Z1_test.shape[0]):
-        filter_values = Z1_test[i, filters]
-        np.random.shuffle(filter_values)
-
-        scrambled_Z1_test[i, filters]=filter_values.astype(np.float16)
-        scrambled_Z1_test[i, non_filters]=Z1_test[i, non_filters].astype(np.float16)
-
-    print("Predicting Z2 test")
-
-    Z2_test = model_flow(scrambled_Z1_test)
-
-    Z2_model, Z2_accuracy = get_log_reg_model(Z2_train, y_train, Z2_test, y_test)
-
-    return Z2_model, Z2_accuracy
 
 
 def plot_reconstruction(experiment, split, shape=(20,20)):
-    #Not tested, goal is to give the same dataset to different models / setups in the future
     if split == "val":
         x = next(iter(experiment.ds_val))[0][:10]
     elif split == "train":
@@ -349,7 +304,6 @@ def full_analysis(experiment_path, seed=None, epoch_to_restore=None):
     ds_train,ds_test = get_natural_ds(image_size=image_size)
 
     os.makedirs(os.path.join(exp.directory,"analysis"), exist_ok=True)
-
 
     exp.set_datasets(ds_train,ds_test)
 

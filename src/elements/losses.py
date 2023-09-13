@@ -9,6 +9,21 @@ from src.hparams import get_hparams
 from ..utils import scale_pixels
 
 
+def get_loss(type):
+    """
+    General loss function
+    :return: loss
+    """
+    if type == "bce":
+        return nn.BCELoss()
+    elif type == "mse":
+        return nn.MSELoss()
+    elif type == "l1":
+        return nn.L1Loss()
+    else:
+        raise ValueError(f'Unknown loss: {type}')
+
+
 def get_reconstruction_loss():
     """
     Get reconstruction loss based on hparams
@@ -43,6 +58,9 @@ def get_kl_loss():
         return KLDivergence(data_shape=params.data_params.shape)
     else:
         raise ValueError(f'Unknown kl loss: {params.loss_params.kldiv_loss}')
+
+
+
 
 
 class LogProb(nn.Module):

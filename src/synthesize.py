@@ -30,6 +30,20 @@ def generation_mode(model, artifacts_folder, logger: logging.Logger = None):
 def reconstruction_mode(model, test_dataset, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
     reconstruct(model, test_dataset, artifacts_folder, latents_folder, logger)
 
+def decodability_mode(model, labeled_loader):
+    p = get_hparams()
+    decode_from_list = p.synthesis_params.decodability.decode_from
+    X = {layer: [] for layer in decode_from_list}
+    Y = {layer: [] for layer in decode_from_list}
+    for batch in labeled_loader:
+        inp, label = batch
+        _, _, distributions = model(inp)
+        for decode_from in decode_from_list:
+            X[decode_from].append(distributions[decode_from].mean)
+            Y[decode_from].append(label)
+
+
+
 
 def synthesize(model, data, logdir, mode, logger: logging.Logger = None):
     artifacts_folder = os.path.join(logdir, 'synthesized-images')

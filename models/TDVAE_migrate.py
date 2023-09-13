@@ -1,5 +1,5 @@
 from collections import OrderedDict
-
+import torch
 
 def _model(migration):
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
@@ -45,6 +45,18 @@ def _model(migration):
     )
 
     return __model
+
+
+def texture_decodability(n_input_dims, n_classes):
+    return Hyperparams(
+        type='mlp',
+        input_size=n_input_dims,
+        hidden_sizes=[],
+        output_size=n_classes,
+        activation=torch.nn.Softmax,
+        residual=False,
+        activate_output=True
+    )
 
 
 # --------------------------------------------------
@@ -256,6 +268,7 @@ eval_params = Hyperparams(
 SYNTHESIS HYPERPARAMETERS
 --------------------
 """
+
 synthesis_params = Hyperparams(
     # The synthesized mode can be a subset of
     # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'latent_traversal')
@@ -287,7 +300,6 @@ synthesis_params = Hyperparams(
     # Latent traversal mode
     # --------------------
     latent_traversal=Hyperparams(
-
         # Number of samples to generate per latent traversal
         n_samples_per_latent_traversal=10,
     ),
@@ -312,7 +324,16 @@ synthesis_params = Hyperparams(
 
     # Decodability mode
     # --------------------
-    decodability=Hyperparams(),
+
+    decodability=Hyperparams(
+        model=texture_decodability,
+        optimizer='Adam',
+        loss="bce",
+        epcohs=100,
+        learning_rate=1e-3,
+        batch_size=32,
+        decode_from=['z', 'y'],
+    ),
 
     # Generation_mode
     # --------------------
