@@ -5,7 +5,7 @@ from torch import nn
 from torch import tensor
 from collections import OrderedDict
 
-from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, TopGenBlock
+from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleGenBlock, TopGenBlock
 from src.hvae.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
 
 
@@ -19,11 +19,9 @@ class Encoder(nn.Module):
         distributions = dict()
         for block in self.blocks.values():
             output = block(computed)
-            if isinstance(output, tuple):
-                computed, dists = output
+            computed, dists = output
+            if dists:
                 distributions[block.output] = dists
-            else:
-                computed = output
             if to_compute is not None and to_compute in computed:
                 return computed
         return computed, distributions
@@ -47,23 +45,20 @@ class Generator(nn.Module):
             args = dict(computed=computed, variate_mask=variate_mask) \
                 if isinstance(block, GenBlock) else dict(computed=computed)
             output = block(**args)
-            if isinstance(output, tuple):
-                computed, dists = output
+            computed, dists = output
+            if dists:
                 distributions[block.output] = dists
-            else:
-                computed = output
             if to_compute is not None and to_compute in computed:
                 return computed, distributions
         return computed, distributions
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
+        distributions = dict()
         with torch.no_grad():
             for i, block in enumerate(self.blocks.values()):
-                if not isinstance(block, SimpleBlock):
-                    computed = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
-                else:
-                    computed = block(computed)
-        return computed
+                computed, dist = block.sample_from_prior(batch_size if i == 0 else computed, temperatures[i])
+                distributions[block.output] = dist
+        return computed, distributions
 
 
 class hVAE(nn.Module):
@@ -93,7 +88,10 @@ class hVAE(nn.Module):
         self.encoder: Encoder = Encoder(encoder_blocks)
         self.generator: Generator = Generator(generator_blocks)
 
-    def compute_function(self, block_name) -> (tensor, dict):
+    def compute_function(self, block_name='output') -> (tensor, dict):
+        if block_name == 'output':
+            block_name = self.output_block.output
+
         def compute(x: tensor or dict) -> (tensor, dict):
             if isinstance(x, dict):
                 computed = x
@@ -105,9 +103,8 @@ class hVAE(nn.Module):
             computed, _ = self.generator(computed, distributions, to_compute=block_name)
             if block_name in computed.keys():
                 return computed[block_name]
-            output_sample, computed, _ = self.output_block(computed)
-            return output_sample
-
+            computed, distributions = self.output_block(computed)
+            return computed, distributions
         return compute
 
     def summary(self):
@@ -161,17 +158,20 @@ class hVAE(nn.Module):
         return evaluate(self, test_loader)
 
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
-        computed = self.generator.sample_from_prior(batch_size, temperatures)
-        output_sample, computed = self.output_block.sample_from_prior(computed)
-        return output_sample, computed
+        computed, distributions = self.generator.sample_from_prior(batch_size, temperatures)
+        computed, output_distribution = self.output_block.sample_from_prior(computed)
+        computed['output'] = computed[self.output_block.output]
+        distributions['output'] = output_distribution
+        return computed, distributions
 
     def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, dict):
         computed = self.input_block(x)
         computed, distributions = self.encoder(computed)
         computed, distributions = self.generator(computed, distributions, variate_masks)
-        output_sample, computed, output_distribution = self.output_block(computed)
+        computed, output_distribution = self.output_block(computed)
+        computed['output'] = computed[self.output_block.output]
         distributions['output'] = output_distribution
-        return output_sample, computed, distributions
+        return computed, distributions
 
     # TODO
     def visualize_graph(self) -> None:

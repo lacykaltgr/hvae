@@ -13,6 +13,7 @@ from torch import nn
 from src.utils import NumpyEncoder
 from src.hparams import get_hparams
 from torch.utils.data import Dataset, DataLoader
+from src.hvae.model import reconstruct
 
 NUM_TEXT_FAMILY = 5
 
@@ -57,7 +58,7 @@ def decodability(model, labeled_loader, filter_dict=None):
             Y.append(label)
     Y = np.concatenate(Y, axis=0)
 
-    accuracies = []
+    accuracies = dict()
     for decode_from in decode_from_list:
         X[decode_from] = np.concatenate(X[decode_from], axis=0)
         num_input_dims = X[decode_from].shape[1]
@@ -69,133 +70,56 @@ def decodability(model, labeled_loader, filter_dict=None):
         loss = p.synthesis_params.decodability.loss()
         accuracy = decodability_model(decodability_model, optimizer, loss, p.synthesis_params.decodability.epochs,
                                              p.synthesis_params.decodability.batch_size, decodability_dataset)
-        accuracies.append((decode_from, accuracy))
+        accuracies[decode_from] = accuracy
 
 
-
-def plot_reconstruction(experiment, split, shape=(20,20)):
-    if split == "val":
-        x = next(iter(experiment.ds_val))[0][:10]
-    elif split == "train":
-        x = next(iter(experiment.ds_train))[0][:10]
-    else:
-        raise ValueError(f"Plotting reconstruction for split {split} is not possible.")
-
-    xhat = experiment.model(x)
-
-    shape = (10, *shape)
-    x = torch.reshape(x, shape)
-    xs = [x, torch.reshape(xhat.sample(), shape), torch.reshape(xhat.mean(), shape)]
+def plot_reconstruction(net, dataloader, checkpoint_path, logger):
+    io_pairs = reconstruct(net, dataloader, latents_folder=None, logger=logger)
 
     row_titles = ["Original", "Sampled", "Mean"]
-    n = x.shape[0]
+    n = len(io_pairs)
     m = len(row_titles)
-
     fig, axes = plt.subplots(nrows=m, ncols=n, figsize=(12, 8))
-
-    for ax, row in zip(axes[:,0], row_titles):
-        ax.set_title(row,  size='large')
-
-    for i in range(m):
-        for j in range(n):
-            axes[i, j].imshow(xs[i][j], interpolation='none', cmap='gray')
+    for ax, row in zip(axes[:, 0], row_titles):
+        ax.set_title(row, size='large')
+    for i in range(n):
+        for j in range(m):
+            axes[i, j].imshow(io_pairs[i][j], interpolation='none', cmap='gray')
             axes[i, j].axis('off')
 
     fig.tight_layout()
-    fig.savefig(os.path.join(experiment.directory, "analysis", f"reconstruction_{split}.png"), facecolor="white")
+    fig.savefig(os.path.join(checkpoint_path, "analysis", f"reconstruction.png"), facecolor="white")
 
 
-def latent_traversal(model, sample, z_id, n_cols, diff=0, step_size=1, save_path=None, num_dims=450):
+def latent_traversal (model, sample, target_block, n_cols, diff=0 , value=1, checkpoint_path=None, n_dims=70):
 
-    _, computed, distributions = model(sample)
+    compute_target_block = model.compute_function(target_block)
+    target_computed, _ = compute_target_block(sample)
+    input_0 = target_computed[target_block]
 
-    input_0 = computed[z_id]
-    output_0 = torch.mean(distributions[-1][0].mean(), dim=0)
+    compute_output = model.compute_function('output')
+    output_computed, _ = compute_output(target_computed, use_mean=True)
+    output_0 = torch.mean(output_computed['output'], dim=0)
 
-    n_rows = int(np.ceil(num_dims/n_cols))
+    n_rows = int(np.ceil(n_dims/n_cols))
     fig, ax = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(n_cols*2, n_rows*2))
 
-    receptive_field_list = []
-    for i in range(num_dims):
-        input_i = np.zeros([1, num_dims])
-        input_i[0, i] = step_size
+    for i in range(n_dims):
+        input_i = np.zeros([1, n_dims])
+        input_i[0, i] = value
         input_i = input_0 + input_i
-        output_i = torch.mean(model.p_x_z1_model(input_i).mean(), dim=0)
+        target_computed[target_block] = input_i
 
-        receptive_field_list.append((output_i-diff*output_0).numpy())
+        trav_output_computed, _ = compute_output(target_computed, use_mean=True)
+        output_i = torch.mean(trav_output_computed, dim=0)
 
-        ax[i//n_cols][i % n_cols].imshow(output_i-diff*output_0,interpolation='none', cmap='gray')
-        ax[i//n_cols][i % n_cols].set_title(f"{i}")
-        ax[i//n_cols][i % n_cols].axis('off')
+        ax[i // n_cols][i % n_cols].imshow(output_i-diff*output_0, interpolation='none', cmap='gray')
+        ax[i // n_cols][i % n_cols].set_title(f"{i}")
+        ax[i // n_cols][i % n_cols].axis('off')
 
-    receptive_field_tensor = np.concatenate(receptive_field_list)
-
-    pickle_path = path = os.path.join(experiment.directory, "analysis", f"Z1_trav.pkl")
-    pickle.dump(receptive_field_tensor, open(pickle_path, "wb"))
-
-
-    if save_path:
-        path= save_path
-    else:
-        path=os.path.join(experiment.directory,"analysis",f"Z1_trav.png")
-
-    plt.title(experiment.experiment_configs["experiment_directory"].split("/")[-1])
-
+    path = os.path.join(checkpoint_path, "analysis", f"Z2_trav.png")
+    plt.title(f"{target_block} traversal")
     fig.savefig(path, facecolor="white")
-    plt.show()
-
-def Z2_traversal (experiment, n_cols, shape=None,diff=0 , step_size=1, save_path=None, num_dims=70):
-    #batch
-    for samples in experiment.ds_train.take(1):
-        sample=samples[0]
-
-    z1=experiment.model.q_z1_x_model(sample)
-    z2=experiment.model.q_z2_z1_model(z1)
-
-    input_0=z2.sample()
-
-    z1=experiment.model.p_z1_z2_model(input_0).mean()#???
-    x=experiment.model.p_x_z1_model(z1).mean()
-    output_0=tf.reduce_mean(x,axis=0)
-
-    if shape:
-        output_0 = tf.reshape(output_0, shape)
-
-    n_rows=int(np.ceil(num_dims/n_cols))
-    fig, ax = plt.subplots(nrows=n_rows, ncols=n_cols,figsize=(n_cols*2,n_rows*2))
-
-    dims = np.arange(num_dims)
-
-    for i in dims:
-
-        input_i = np.zeros([1,num_dims])
-        input_i[0,i]=step_size
-        input_i=input_0+input_i
-
-        z1=experiment.model.p_z1_z2_model(input_i).mean()#???
-        x=experiment.model.p_x_z1_model(z1).mean()
-        output_i=tf.reduce_mean(x,axis=0)
-
-        # output_i=tf.reduce_mean(experiment.model.p_x_z1_model(input_i).mean(),axis=0)
-
-        if shape:
-            output_i = tf.reshape(output_i, shape)
-
-        ax[i//n_cols][i%n_cols].imshow(output_i-diff*output_0,interpolation='none', cmap='gray')
-
-
-        ax[i//n_cols][i%n_cols].set_title(f"{i}")
-
-        ax[i//n_cols][i%n_cols].axis('off')
-
-    if save_path:
-        path= save_path
-    else:
-        path=os.path.join(experiment.directory,"analysis",f"Z2_trav.png")
-
-    plt.title(experiment.experiment_configs["experiment_directory"].split("/")[-1])
-
-    fig.savefig(path,facecolor="white")
     plt.show()
 
 
@@ -215,7 +139,6 @@ def get_Z2_post(model, ex, filter_dict=None, class_label=None, return_KL=False):
     if filter_dict:
         filters = filter_dict["filter_dims"]
         non_filters = filter_dict["non_filter_dims"]
-
         Z1 = Z1.numpy()
         Z1[:, filters] = shuffle_along_axis(Z1[:, filters], axis=1)
 
@@ -289,60 +212,6 @@ def generate_active_dim_plots(experiment_path):
     fig3.figure.savefig(text_std_path)
     fig3.set_xlabel('z2 latent variable index')
 
-
-def full_analysis(experiment_path, seed=None, epoch_to_restore=None):
-    if seed is not None:
-        tf.random.set_seed(seed)
-        random.seed(seed)
-        np.random.seed(seed)
-
-    exp = prepare_experiment(experiment_path, epoch_to_restore=epoch_to_restore)
-    config = exp.model_configs
-
-    image_size, num_z1_dims, num_z2_dims = infer_sizes_from_config(config)
-
-    ds_train,ds_test = get_natural_ds(image_size=image_size)
-
-    os.makedirs(os.path.join(exp.directory,"analysis"), exist_ok=True)
-
-    exp.set_datasets(ds_train,ds_test)
-
-    plot_reconstruction(exp,"val", shape=(image_size, image_size))
-    plot_reconstruction(exp,"train", shape=(image_size, image_size))
-
-    Z1_traversal(exp, 10, shape=(image_size, image_size),diff=1 , step_size=1, num_dims=num_z1_dims)
-    Z2_traversal(exp, 10, shape=(image_size, image_size),diff=1 , step_size=1, num_dims=num_z2_dims)
-
-    filter_dict = Z1_filters(exp,diff=0 , step_size=1, num_dims=num_z1_dims)
-
-    model = exp.model
-    directory = exp.directory
-    del ds_train, ds_test, exp
-    gc.collect()
-
-    Z1_model, Z1_accuracy, Z2_model, Z2_accuracy = decodability(model, image_size=image_size, filter_dict=filter_dict)
-
-    if epoch_to_restore is None:
-        last_metrics=pd.read_csv(os.path.join(directory, "log.csv")).iloc[-1]
-    else:
-        metrics=pd.read_csv(os.path.join(directory, "log.csv"))
-        last_metrics = metrics[metrics["epoch"] == epoch_to_restore].iloc[-1]
-
-    model_results={
-        "name": os.path.normpath(directory).split(os.sep)[-1]
-    }
-    model_results.update(last_metrics)
-
-    model_results["Z1_decodability"]=Z1_accuracy
-    model_results["Z2_decodability"]=Z2_accuracy
-    model_results["filter_count"]=int(filter_dict["filter_count"])
-
-    with open(os.path.join(directory,"analysis","results.json"),"w") as f:
-        json.dump(model_results,f)
-
-    gc.collect()
-
-    generate_active_dim_plots(experiment_path, image_size=image_size, epoch_to_restore=epoch_to_restore)
 
 
 def Z1_filters(experiment, step_size=1, num_dims=450):

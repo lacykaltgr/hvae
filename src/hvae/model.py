@@ -14,7 +14,7 @@ from src.checkpoint import Checkpoint
 from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
-from src.utils import tensorboard_log, get_variate_masks, write_image_to_disk, linear_temperature, \
+from src.utils import tensorboard_log, get_variate_masks, linear_temperature, \
     prepare_for_log, print_line, log_to_csv
 
 prms = get_hparams()
@@ -26,7 +26,7 @@ kl_divergence = get_kl_loss()
 ssim_metric = StructureSimilarityIndexMap(image_channels=prms.data_params.shape[0])
 
 
-def compute_loss(targets: tensor, distributions: list, logits: tensor = None, step_n: int = 0) -> dict:
+def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, step_n: int = 0) -> dict:
     """
     Compute loss for VAE (custom or default)
     based on Efficient-VDVAE paper
@@ -42,12 +42,14 @@ def compute_loss(targets: tensor, distributions: list, logits: tensor = None, st
         return prms.loss_params.custom_loss(targets=targets, logits=logits,
                                             distributions=distributions, step_n=step_n)
 
-    output_distribution = distributions[-1][0]
+    output_distribution = distributions['output']
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
-    distributions_for_kl = list(filter(lambda x: x[1] is not None, distributions))
+    distributions_for_kl = list(filter(lambda key, value:
+                                       key != 'output' and value[1] is not None,
+                                       distributions.items()))
     for prior, posterior in distributions_for_kl:
         loss, avg_loss = kl_divergence(prior, posterior)
         global_variational_prior_losses.append(loss)
@@ -132,14 +134,14 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
     """
     net.eval()
     with torch.no_grad():
-        output_sample, computed, distributions = net(inputs, variates_masks)
+        computed, distributions = net(inputs, variates_masks)
         if step_n is None:
             step_n = max(prms.loss_params.vae_beta_anneal_steps, prms.loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, distributions, step_n=step_n)
-        return output_sample, computed, results
+        return computed, distributions, results
 
 
-def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
+def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.Logger = None):
     """
     Reconstruct the images from the given dataset
     based on Efficient-VDVAE paper
@@ -151,9 +153,6 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
-    if artifacts_folder is not None:
-        artifacts_folder = artifacts_folder.replace('synthesized-images', 'synthesized-images/reconstructed')
-        os.makedirs(artifacts_folder, exist_ok=True)
     if prms.synthesis_params.mask_reconstruction:
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
         variate_masks = get_variate_masks(div_stats).astype(np.float32)
@@ -161,13 +160,12 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
         variate_masks = None
 
     nelbos, ssims = 0., 0.
-    sample_i = 0
-
     io_pairs = list()
     step = 0
     for step, inputs in enumerate(dataset):
         inputs = inputs.to(device)
-        outputs, _, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
+        computed, distributions, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
+        outputs = computed['output'].detach().cpu()
 
         ssim_per_batch = ssim_metric(inputs, outputs, global_batch_size=prms.synthesis_params.batch_size)
         ssims += ssim_per_batch
@@ -176,18 +174,9 @@ def reconstruct(net, dataset: DataLoader, artifacts_folder=None, latents_folder=
         kl_div = loss['kl_div']
         nelbos += nelbo
 
-        # Save images to disk
-        if artifacts_folder is not None:
-            for batch_i, (target, output) in enumerate(zip(inputs, outputs)):
-                if prms.synthesis_params.save_target_in_reconstruction:
-                    write_image_to_disk(
-                        os.path.join(artifacts_folder, f'target-{sample_i:04d}.png'),
-                        target.detach().cpu().numpy())
-                write_image_to_disk(
-                    os.path.join(artifacts_folder, f'image-{sample_i:04d}.png'),
-                    output.detach().cpu().numpy())
-                io_pairs.append((target, output))
-                sample_i += 1
+        output_samples = distributions['output'].sample()
+        output_means = distributions['output'].mean()
+        io_pairs = list(zip(inputs, output_samples, output_means))
 
         logger.info(
             f'Step: {step:04d}  | '
@@ -212,8 +201,8 @@ def generation_step(net, temperatures: list):
     :param temperatures: list, the temperatures for each generator block
     :return: tensor, the generated images
     """
-    samples, _ = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
-    return samples
+    computed, _ = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
+    return computed['output']
 
 
 def generate(net, logger: logging.Logger):
@@ -265,7 +254,8 @@ def train_step(net, optimizer, schedule, inputs, step_n):
     :param step_n: int, the current step number
     :return: tensor, dict, tensor, the output images, the loss values, the global norm of the gradients
     """
-    output_sample, _, distributions = net(inputs)
+    computed, distributions = net(inputs)
+    output_sample = computed['output']
     results = compute_loss(inputs, distributions, step_n=step_n)
 
     results["elbo"].backward()
@@ -426,8 +416,9 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     for val_step, val_inputs in enumerate(val_loader):
         n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
-        val_outputs, val_computed, val_results = \
+        val_computed, val_distributions, val_results = \
             reconstruction_step(net, inputs=val_inputs, step_n=global_step)
+        val_outputs = val_computed["output"]
 
         val_ssim_per_batch = ssim_metric(val_inputs, val_outputs, global_batch_size=prms.eval_params.batch_size)
         val_feature_matching_losses += val_results["reconstruction_loss"]
@@ -457,7 +448,7 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
         f' KL Div {global_results["kl_div"]:.4f} |'f'NELBO {global_results["elbo"]:.6f} |'
         f' SSIM: {global_results["ssim"]:.6f}')
 
-    return val_results, val_outputs, val_inputs
+    return global_results, val_outputs, val_inputs
 
 
 def model_summary(net):

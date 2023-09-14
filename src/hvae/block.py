@@ -22,6 +22,12 @@ class _Block(SerializableModule):
         self.input = input_id
         self.output = self.input + "_out" if self.input is not None else None
 
+    def forward(self, computed: dict, **kwargs) -> (dict, None):
+        return dict(), None
+
+    def sample_from_prior(self, computed: dict, t: float or int = None, **kwargs) -> (dict, None):
+        return self.forward(computed)
+
     def freeze(self, net_name: str):
         for name, param in self.named_parameters():
             if net_name in name:
@@ -47,13 +53,13 @@ class SimpleBlock(_Block):
         super(SimpleBlock, self).__init__(input_id)
         self.net: Sequential = get_net(net)
 
-    def forward(self, computed: dict) -> dict:
+    def forward(self, computed: dict, **kwargs) -> (dict, None):
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         inputs = computed[self.input]
         output = self.net(inputs)
         computed[self.output] = output
-        return computed
+        return computed, None
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -77,13 +83,13 @@ class ConcatBlock(_Block):
         self.inputs = inputs
         self.dimension = dimension
 
-    def forward(self, computed: dict) -> dict:
+    def forward(self, computed: dict, **kwargs) -> (dict, None):
         if not all([inp in computed for inp in self.inputs]):
             raise ValueError("Not all inputs found in computed")
         x, skip = [computed[inp] for inp in self.inputs]
         x_skip = torch.cat([x, skip], dim=self.dimension)
         computed[self.output] = x_skip
-        return computed
+        return computed, None
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -109,13 +115,13 @@ class DualInputBlock(_Block):
         self.inputs = inputs
         self.net = get_net(net)
 
-    def forward(self, computed: dict) -> dict:
+    def forward(self, computed: dict, **kwargs) -> (dict, None):
         if not all([inp in computed for inp in self.inputs]):
             raise ValueError("Not all inputs found in computed")
         input1, input2 = [computed[inp] for inp in self.inputs]
         output = self.net([input1, input2])
         computed[self.output] = output
-        return computed
+        return computed, None
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -140,11 +146,12 @@ class InputBlock(SimpleBlock):
     def __init__(self, net=None):
         super(InputBlock, self).__init__(net, "input")
 
-    def forward(self, inputs: tensor) -> dict:
-        return {self.output: inputs} \
-            if self.net is None else \
-            {self.input: inputs,
-             self.output: self.net(inputs)}
+    def forward(self, inputs: tensor, **kwargs) -> dict:
+        computed = {self.output: inputs} \
+                    if self.net is None else \
+                    {self.input: inputs,
+                     self.output: self.net(inputs)}
+        return computed
 
     @staticmethod
     def deserialize(serialized: dict):
@@ -175,11 +182,11 @@ class TopSimpleBlock(SimpleBlock):
             # constant tensor with 0 values
             self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False)
 
-    def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
+    def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (dict, None):
         x = torch.tile(self.trainable_h, (list(computed.values())[-1].shape[0], 1))
         z = self.net(x)
         computed[self.output] = z
-        return computed
+        return computed, None
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -211,28 +218,28 @@ class SimpleGenBlock(_Block):
         self.prior_net: Sequential = get_net(net)
         self.output_distribution: str = output_distribution
 
-    def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
+    def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
         prior = generate_distribution(pm, pv, self.output_distribution)
-        z = prior.sample()
+        z = prior.sample() if not use_mean else prior.mean
         return z, (prior, None)
 
-    def forward(self, computed: dict) -> (dict, tuple):
+    def forward(self, computed: dict, use_mean=False, **kwargs) -> (dict, tuple):
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         x = computed[self.input]
-        z, distribution = self._sample_uncond(x)
+        z, distribution = self._sample_uncond(x, use_mean=use_mean)
         computed[self.output] = z
         return computed, distribution
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
+    def sample_from_prior(self, computed: dict, t: float or int = None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
-        z, _ = self._sample_uncond(x, t)
+        z, dist = self._sample_uncond(x, t, use_mean=use_mean)
         computed[self.output] = z
-        return computed
+        return computed, dist
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -250,34 +257,7 @@ class SimpleGenBlock(_Block):
         )
 
 
-class OutputBlock(SimpleGenBlock):
-    """
-    Final block of the model
-    Functions like a SimpleDecBlock
-    """
-    def __init__(self, net,
-                 input_id: str,
-                 output_distribution: str = 'normal'):
-        super(OutputBlock, self).__init__(net, input_id, output_distribution)
-
-    def forward(self, computed: dict) -> (tensor, dict, tuple):
-        computed, distribution = super().forward(computed)
-        output_sample = computed[self.output]
-        return output_sample, computed, distribution
-
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> (tensor, dict):
-        computed = super().sample_from_prior(computed, t)
-        output_sample = computed[self.output]
-        return output_sample, computed
-
-    @staticmethod
-    def deserialize(serialized: dict):
-        prior_net = Sequential.deserialize(serialized["prior_net"])
-        return OutputBlock(
-            net=prior_net,
-            input_id=serialized["input"],
-            output_distribution=serialized["output_distribution"]
-        )
+OutputBlock = SimpleGenBlock
 
 
 class GenBlock(SimpleGenBlock):
@@ -305,7 +285,7 @@ class GenBlock(SimpleGenBlock):
         self.concat_posterior = concat_posterior
         self.condition = condition
 
-    def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
+    def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
@@ -317,40 +297,40 @@ class GenBlock(SimpleGenBlock):
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample()
+        z = posterior.sample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample()
+            z_prior = prior.sample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (prior, posterior)
 
-    def _sample_uncond(self, y: tensor, t: float or int = None) -> tensor:
+    def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> tensor:
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
 
         prior = generate_distribution(pm, pv, self.output_distribution)
-        z = prior.sample()
-        return z
+        z = prior.sample() if not use_mean else prior.mean
+        return z, (prior, None)
 
-    def forward(self, computed: dict, variate_mask=None) -> (dict, tuple):
+    def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (dict, tuple):
         if self.input not in computed.keys():
             raise ValueError(f"Input {self.input} not found in computed")
         if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
         x = computed[self.input]
         cond = computed[self.condition]
-        z, distributions = self._sample(x, cond, variate_mask)
+        z, distributions = self._sample(x, cond, variate_mask, use_mean=use_mean)
         computed[self.output] = z
         return computed, distributions
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
+    def sample_from_prior(self, computed: dict, t: float or int = None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
-        z = self._sample_uncond(x, t)
+        z, dist = self._sample_uncond(x, t, use_mean=use_mean)
         computed[self.output] = z
-        return computed
+        return computed, dist
 
     @staticmethod
     def prune(z, z_prior, variate_mask=None):
@@ -422,7 +402,7 @@ class TopGenBlock(GenBlock):
             self.trainable_h = torch.zeros(size=prior_shape, requires_grad=False) \
                 if prior_data is None else prior_data
 
-    def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tuple):
+    def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
@@ -431,32 +411,32 @@ class TopGenBlock(GenBlock):
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample()
+        z = posterior.sample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample()
+            z_prior = prior.sample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (prior, posterior)
 
-    def forward(self, computed: dict, variate_mask=None) -> (tensor, dict, tuple):
+    def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (tensor, dict, tuple):
         if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
         cond = computed[self.condition]
         x = torch.tile(self.trainable_h, (cond.shape[0], 1))
         if cond.shape != x.shape and self.concat_posterior:
             x = x.resize(cond.shape)
-        z, distributions = self._sample(x, cond)
+        z, distributions = self._sample(x, cond, use_mean=use_mean)
         computed[self.output] = z
         return computed, distributions
 
-    def sample_from_prior(self, batch_size: int, t: int or float = None) -> (tensor, dict):
+    def sample_from_prior(self, batch_size: int, t: int or float = None, use_mean=False, **kwargs) -> (dict, tuple):
         y = torch.tile(self.trainable_h, (batch_size, 1))
-        z = self._sample_uncond(y, t)
+        z, dist = self._sample_uncond(y, t, use_mean=use_mean)
         computed = {
             self.input: y,
             self.output: z}
-        return computed
+        return computed, dist
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -489,12 +469,14 @@ class ResidualGenBlock(GenBlock):
                  posterior_net,
                  z_projection,
                  input, condition,
+                 concat_posterior: bool,
                  output_distribution: str = 'normal'):
-        super(ResidualGenBlock, self).__init__(prior_net, posterior_net, input, condition, output_distribution)
+        super(ResidualGenBlock, self).__init__(
+            prior_net, posterior_net, input, condition, concat_posterior, output_distribution)
         self.net: Sequential = get_net(net)
         self.z_projection: Sequential = get_net(z_projection)
 
-    def _sample(self, y: tensor, cond: tensor, variate_mask=None) -> (tensor, tensor, tuple):
+    def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tensor, tuple):
 
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
@@ -503,41 +485,41 @@ class ResidualGenBlock(GenBlock):
         y_posterior = self.posterior_net(torch.cat([y, cond], dim=1)) # y, cond fordított sorrendben mint máshol
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample()
+        z = posterior.sample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample()
+            z_prior = prior.sample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual
         return z, y, (prior, posterior)
 
-    def _sample_uncond(self, y: tensor, t: float or int = None) -> (tensor, tensor):
+    def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> (tensor, tensor):
         y_prior = self.prior_net(y)
         pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
         prior = generate_distribution(pm, pv, self.output_distribution)
-        z = prior.sample()
+        z = prior.sample() if not use_mean else prior.mean
         y = y + kl_residual
-        return z, y
+        return z, y, (prior, None)
 
-    def forward(self, computed: dict, variate_mask=None) -> (dict, tuple):
+    def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
-        z, x, distributions = self._sample(x, cond, variate_mask)
+        z, x, distributions = self._sample(x, cond, variate_mask, use_mean)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
         return computed, distributions
 
-    def sample_from_prior(self, computed: dict, t: float or int = None) -> dict:
+    def sample_from_prior(self, computed: dict, t: float or int = None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
-        z, x = self._sample_uncond(x, t)
+        z, x, dist = self._sample_uncond(x, t, use_mean=use_mean)
         x = x + self.z_projection(z)
         x = self.net(x)
         computed[self.output] = x
-        return computed
+        return computed, dist
 
     def serialize(self) -> dict:
         serialized = super().serialize()
@@ -558,5 +540,6 @@ class ResidualGenBlock(GenBlock):
             z_projection=z_projection,
             input=serialized["input"],
             condition=serialized["condition"],
+            concat_posterior=serialized["concat_posterior"],
             output_distribution=serialized["output_distribution"]
         )
