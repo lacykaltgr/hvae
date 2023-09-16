@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import torch
 
+
 def _model(migration):
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
     from src.hvae.hvae import hVAE as hvae
@@ -8,7 +9,7 @@ def _model(migration):
 
     _blocks = OrderedDict(
         x=InputBlock(
-            net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
+            net=Flatten(start_dim=1),  # 0: batch-flatten, 1: sample-flatten
         ),
         hiddens=SimpleBlock(
             net=migration.get_net("mlp_shared_encoder", activate_output=True),
@@ -16,7 +17,7 @@ def _model(migration):
         ),
         y=TopGenBlock(
             net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(500, ),
+            prior_shape=(500,),
             prior_trainable=False,
             concat_posterior=False,
             condition="hiddens",
@@ -86,7 +87,6 @@ log_params = Hyperparams(
     # --------------------
     load_from_eval='migration/2023-09-06__14-55/migrated_checkpoint.pth',
 
-
     # SYNTHESIS
     # --------------------
     load_from_synthesis='migration/2023-09-05__09-53/checkpoints/checkpoint-0.pth',
@@ -111,7 +111,7 @@ model_params = Hyperparams(
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
-    gradient_smoothing_beta=1,#0.6931472,
+    gradient_smoothing_beta=1,  # 0.6931472,
 
     # Num of mixtures in the MoL layer
     num_output_mixtures=3,
@@ -126,6 +126,7 @@ DATA HYPERPARAMETERS
 --------------------
 """
 from data.textures.textures import TexturesDataset as dataset
+
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
@@ -194,7 +195,6 @@ optimizer_params = Hyperparams(
     # exponential only
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
-
 
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
@@ -265,13 +265,13 @@ eval_params = Hyperparams(
 
 """
 --------------------
-SYNTHESIS HYPERPARAMETERS
+ANALYSIS HYPERPARAMETERS
 --------------------
 """
 
-synthesis_params = Hyperparams(
+analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'latent_traversal')
+    # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'gabor', 'latent_traversal')
     ops=['reconstruction', 'generation'],
 
     # inference batch size (all modes)
@@ -280,7 +280,6 @@ synthesis_params = Hyperparams(
     # Latent traversal mode
     # --------------------
     reconstrcution=Hyperparams(
-
         # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
         # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
         # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
@@ -292,10 +291,7 @@ synthesis_params = Hyperparams(
         # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
         # suitable value of variate_masks_quantile before running encoding mode.
         variate_masks_quantile=0.03,
-        # Whether to save the targets during reconstruction (for debugging)
-        save_target_in_reconstruction=False
     ),
-
 
     # Latent traversal mode
     # --------------------
@@ -304,10 +300,36 @@ synthesis_params = Hyperparams(
         n_samples_per_latent_traversal=10,
     ),
 
-
     # Most Exciting Input (MEI) mode
     # --------------------
-    mei=Hyperparams(),
+    mei=Hyperparams(
+        queries=dict(
+            z=dict(
+                neuron_query=0,
+                iter_n=1000,  # number of iterations
+                start_sigma=1.5,
+                end_sigma=0.01,
+                start_step_size=3.0,
+                end_step_size=0.125,
+                precond=0,  # strength of gradient preconditioning filter falloff
+                step_gain=0.1,  # scaling of gradient steps
+                jitter=0,  # size of translational jittering
+                blur=True,
+                norm=-1,  # norm adjustment after step, negative to turn off
+                train_norm=-1,  # norm adjustment during step, negative to turn off
+                clip=True  # Whether to clip the range of the image to be in valid range
+            ),
+            y=dict(),
+
+        )
+
+    ),
+    gabor=Hyperparams(
+        queries=dict(
+            z=0,
+            y=1,
+        )
+    ),
 
     # Distribution stats mode
     # --------------------
@@ -360,6 +382,7 @@ BLOCK HYPERPARAMETERS
 --------------------
 """
 import torch
+
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -401,11 +424,9 @@ unpool_params = Hyperparams(
     strides=2,
 )
 
-
 """
 --------------------
 CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-

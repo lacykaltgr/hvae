@@ -6,7 +6,8 @@ from torch import tensor
 from collections import OrderedDict
 
 from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleGenBlock, TopGenBlock
-from src.hvae.model import train, reconstruct, generate, compute_per_dimension_divergence_stats, evaluate, model_summary
+from src.hvae.model import train, reconstruct, generate, evaluate
+from src.hvae.analysis_tools import model_summary, compute_per_dimension_divergence_stats
 
 
 class Encoder(nn.Module):
@@ -14,11 +15,11 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.blocks: nn.ModuleDict = encoder_blocks
 
-    def forward(self, x: tensor, to_compute: str = None) -> (tensor, dict):
+    def forward(self, x: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
         computed = x
         distributions = dict()
         for block in self.blocks.values():
-            output = block(computed)
+            output = block(computed, use_mean=use_mean)
             computed, dists = output
             if dists:
                 distributions[block.output] = dists
@@ -32,7 +33,8 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.blocks: nn.ModuleDict = blocks
 
-    def forward(self, computed: dict, distributions: dict, variate_masks: list = None, to_compute: str = None) \
+    def forward(self, computed: dict, distributions: dict, variate_masks: list = None,
+                to_compute: str = None, use_mean: bool = False) \
             -> (tensor, dict, list):
 
         if variate_masks is None:
@@ -42,9 +44,7 @@ class Generator(nn.Module):
         for block, variate_mask in zip(self.blocks.values(), variate_masks):
             if block.output in computed.keys():
                 continue
-            args = dict(computed=computed, variate_mask=variate_mask) \
-                if isinstance(block, GenBlock) else dict(computed=computed)
-            output = block(**args)
+            output = block(computed, use_mean=use_mean, variate_mask=variate_mask)
             computed, dists = output
             if dists:
                 distributions[block.output] = dists
@@ -88,22 +88,22 @@ class hVAE(nn.Module):
         self.encoder: Encoder = Encoder(encoder_blocks)
         self.generator: Generator = Generator(generator_blocks)
 
-    def compute_function(self, block_name='output') -> (tensor, dict):
+    def compute_function(self, block_name='output') -> callable:
         if block_name == 'output':
             block_name = self.output_block.output
 
-        def compute(x: tensor or dict) -> (tensor, dict):
+        def compute(x: tensor or dict, use_mean=False) -> (dict, dict):
             if isinstance(x, dict):
                 computed = x
             else:
                 computed = self.input_block(x)
-            computed, distributions = self.encoder(computed, to_compute=block_name)
+            computed, distributions = self.encoder(computed, to_compute=block_name, use_mean=use_mean)
             if block_name in computed.keys():
-                return computed[block_name]
-            computed, _ = self.generator(computed, distributions, to_compute=block_name)
+                return computed, distributions
+            computed, _ = self.generator(computed, distributions, to_compute=block_name, use_mean=use_mean)
             if block_name in computed.keys():
-                return computed[block_name]
-            computed, distributions = self.output_block(computed)
+                return computed, distributions
+            computed, distributions = self.output_block(computed, use_mean=use_mean)
             return computed, distributions
         return compute
 

@@ -2,7 +2,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.EfficientVDVAE_migrate as params
+    import models.TDVAE_migrate as params
 
     return Hyperparams(
         log_params=params.log_params,
@@ -12,7 +12,7 @@ def get_hparams():
         optimizer_params=params.optimizer_params,
         loss_params=params.loss_params,
         eval_params=params.eval_params,
-        synthesis_params=params.synthesis_params,
+        analysis_params=params.analysis_params,
 
         migration_params=params.migration_params
         if hasattr(params, 'migration_params') else None,

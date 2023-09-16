@@ -7,7 +7,6 @@ import torch
 from torch import tensor
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 
 from src.hvae.block import GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock
 from src.checkpoint import Checkpoint
@@ -153,7 +152,7 @@ def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.L
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
-    if prms.synthesis_params.mask_reconstruction:
+    if prms.analysis_params.mask_reconstruction:
         div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
         variate_masks = get_variate_masks(div_stats).astype(np.float32)
     else:
@@ -167,7 +166,7 @@ def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.L
         computed, distributions, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
         outputs = computed['output'].detach().cpu()
 
-        ssim_per_batch = ssim_metric(inputs, outputs, global_batch_size=prms.synthesis_params.batch_size)
+        ssim_per_batch = ssim_metric(inputs, outputs, global_batch_size=prms.analysis_params.batch_size)
         ssims += ssim_per_batch
         nelbo = loss['elbo']
         rec_loss = loss["reconstruction_loss"]
@@ -201,7 +200,7 @@ def generation_step(net, temperatures: list):
     :param temperatures: list, the temperatures for each generator block
     :return: tensor, the generated images
     """
-    computed, _ = net.sample_from_prior(prms.synthesis_params.batch_size, temperatures=temperatures)
+    computed, _ = net.sample_from_prior(prms.analysis_params.batch_size, temperatures=temperatures)
     return computed['output']
 
 
@@ -215,7 +214,7 @@ def generate(net, logger: logging.Logger):
     :return: list, the generated images
     """
     all_outputs = list()
-    for temp_i, temperature_setting in enumerate(prms.synthesis_params.temperature_settings):
+    for temp_i, temperature_setting in enumerate(prms.analysis_params.temperature_settings):
         logger.info(f'Generating for temperature setting {temp_i:01d}')
         if isinstance(temperature_setting, list):
             temperatures = temperature_setting
@@ -233,7 +232,7 @@ def generate(net, logger: logging.Logger):
             raise ValueError(f'Temperature Setting {temperature_setting} not interpretable!!')
 
         temp_outputs = list()
-        for step in range(prms.synthesis_params.n_generation_batches):
+        for step in range(prms.analysis_params.n_generation_batches):
             outputs = generation_step(net, temperatures=temperatures)
             temp_outputs.append(outputs)
 
@@ -364,34 +363,6 @@ def train(net,
                 return
 
 
-def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
-    """
-    Compute the per-dimension KL divergence statistics for the given network and dataset
-    based on Efficient-VDVAE paper
-
-    :param net: hVAE, the network
-    :param dataset: DataLoader, the dataset
-    :return: tensor, the per-dimension KL divergence statistics
-    """
-    per_dim_divs = None
-    with torch.no_grad():
-        for step, inputs in enumerate(tqdm(dataset)):
-            inputs = inputs.to(device, non_blocking=True)
-            _, _, distributions = net(inputs)
-            avg_losses = []
-
-            distributions_for_kl = list(filter(lambda x: x[1] is not None, distributions))
-            for prior, posterior in distributions_for_kl:
-                _, avg_loss = kl_divergence(prior, posterior)
-                avg_losses.append(avg_loss)
-            kl_div = torch.stack(avg_losses)
-            per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
-            if step > prms.synthesis_params.div_stats_subset_ratio * len(dataset):
-                break
-    per_dim_divs /= (step + 1)
-    return per_dim_divs
-
-
 def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
     """
     Evaluate the network on the given dataset
@@ -451,12 +422,3 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     return global_results, val_outputs, val_inputs
 
 
-def model_summary(net):
-    """
-    Print the model summary
-    :param net: nn.Module, the network
-    :return: None
-    """
-    from torchinfo import summary
-    shape = (1,) + prms.data_params.shape
-    return summary(net, input_size=shape, depth=7)

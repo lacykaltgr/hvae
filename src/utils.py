@@ -34,6 +34,11 @@ def one_hot(indices, depth, dim):
     return y_onehot
 
 
+def shuffle_along_axis(a, axis):
+    idx = np.random.rand(*a.shape).argsort(axis=axis)
+    return np.take_along_axis(a, idx, axis=axis)
+
+
 def get_same_padding(kernel_size, strides, dilation_rate, n_dims=2):
     p_ = []
     # Reverse order for F.pad
@@ -70,7 +75,7 @@ def get_causal_padding(kernel_size, strides, dilation_rate, n_dims=2):
 
 def get_variate_masks(stats):
     p = get_hparams()
-    thresh = np.quantile(stats, 1 - p.synthesis_params.variates_masks_quantile)
+    thresh = np.quantile(stats, 1 - p.analysis_params.variates_masks_quantile)
     return stats > thresh
 
 

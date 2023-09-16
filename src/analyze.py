@@ -5,7 +5,8 @@ import numpy as np
 import torch
 
 from src.hparams import get_hparams
-from src.hvae.model import compute_per_dimension_divergence_stats, generate, reconstruct
+from src.hvae.model import generate, reconstruct
+from src.hvae.analysis_tools import compute_per_dimension_divergence_stats
 from src.utils import write_image_to_disk, setup_logger, load_experiment_for
 
 
@@ -30,9 +31,10 @@ def generation_mode(model, artifacts_folder, logger: logging.Logger = None):
 def reconstruction_mode(model, test_dataset, artifacts_folder=None, latents_folder=None, logger: logging.Logger = None):
     reconstruct(model, test_dataset, artifacts_folder, latents_folder, logger)
 
+
 def decodability_mode(model, labeled_loader):
     p = get_hparams()
-    decode_from_list = p.synthesis_params.decodability.decode_from
+    decode_from_list = p.analysis_params.decodability.decode_from
     X = {layer: [] for layer in decode_from_list}
     Y = {layer: [] for layer in decode_from_list}
     for batch in labeled_loader:
@@ -43,23 +45,17 @@ def decodability_mode(model, labeled_loader):
             Y[decode_from].append(label)
 
 
+def mei_mode(model, labeled_loader):
+    pass
 
+def gabor_mode(model, labeled_loader):
+    pass
 
-def synthesize(model, data, logdir, mode, logger: logging.Logger = None):
-    artifacts_folder = os.path.join(logdir, 'synthesized-images')
-    latents_folder = os.path.join(logdir, 'latents')
-    os.makedirs(artifacts_folder, exist_ok=True)
-    os.makedirs(latents_folder, exist_ok=True)
+def dist_stats_mode(model, labeled_loader):
+    pass
 
-    if mode == 'reconstruction':
-        reconstruction_mode(model, data, artifacts_folder, latents_folder, logger)
-    elif mode == 'generation':
-        generation_mode(model, artifacts_folder, logger)
-    elif mode == 'div_stats':
-        divergence_stats_mode(model, data, latents_folder)
-    else:
-        logger.error(f'Unknown Mode {mode}')
-        raise ValueError(f'Unknown Mode {mode}')
+def latent_traversal_mode(model, labeled_loader):
+    pass
 
 
 def main():
@@ -75,12 +71,37 @@ def main():
 
     model = model.to(p.model_params.device)
 
-    data_loader = None if p.synthesis_params.synthesis_mode == "generation" \
-        else p.data_params.dataset.get_test_loader() if p.synthesis_params.synthesis_mode == 'reconstruction' \
-        else p.data_params.dataset.get_train_loader() if p.synthesis_params.synthesis_mode in ['encoding', 'div_stats'] \
+    data_loader = None if p.analysis_params.synthesis_mode == "generation" \
+        else p.data_params.dataset.get_test_loader() if p.analysis_params.synthesis_mode == 'reconstruction' \
+        else p.data_params.dataset.get_train_loader() if p.analysis_params.synthesis_mode in ['encoding', 'div_stats'] \
         else None
 
-    synthesize(model, data_loader, checkpoint_path, mode=p.synthesis_params.synthesis_mode, logger=logger)
+    #artifacts_folder = os.path.join(logdir, 'synthesized-images')
+    #latents_folder = os.path.join(logdir, 'latents')
+    #os.makedirs(artifacts_folder, exist_ok=True)
+    #os.makedirs(latents_folder, exist_ok=True)
+
+    data = None
+    for operation in p.analysis_params.ops:
+        if operation == 'reconstruction':
+            reconstruction_mode(model, data, artifacts_folder, latents_folder, logger)
+        elif operation == 'generation':
+            generation_mode(model, artifacts_folder, logger)
+        elif operation == 'div_stats':
+            divergence_stats_mode(model, data, latents_folder)
+        elif operation == 'decodability':
+            decodability_mode(model, data)
+        elif operation == 'mei':
+            mei_mode(model, data)
+        elif operation == 'gabor':
+            gabor_mode(model, data)
+        elif operation == 'dist_stats':
+            dist_stats_mode(model, data)
+        elif operation == 'latent_traversal':
+            latent_traversal_mode(model, data)
+        else:
+            logger.error(f'Unknown Mode {operation}')
+            raise ValueError(f'Unknown Mode {operation}')
 
 
 if __name__ == '__main__':
