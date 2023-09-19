@@ -21,17 +21,20 @@ def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 
     :param sigma_param: 'var', 'std'
     :return: torch.distributions.Distribution object
     """
-    params = get_hparams().model_params
+
+    params = get_hparams()
+    model_params = params.model_params
+    data_params = params.data_params
 
     if distribution == 'mixture_of_logistics' or distribution == 'mol':
         return MixtureOfLogistics(
             logits=mu,
-            n_output_mixtures=params.model_params.n_output_mixtures,
+            n_output_mixtures=model_params.num_output_mixtures,
             temperature=1,
-            distribution_base=params.model_params.distribution_base,
-            gradient_smoothing_beta=params.model_params.output_gradient_smoothing_beta,
-            n_channels=params.data_params.shape[-1],
-            min_mol_logscale=params.model_params.min_mol_logscale,
+            distribution_base=model_params.distribution_base,
+            gradient_smoothing_beta=model_params.gradient_smoothing_beta,
+            n_channels=data_params.shape[-1],
+            min_mol_logscale=model_params.min_mol_logscale,
             min_pix_value=0,
             max_pix_value=255,
         )
@@ -39,9 +42,9 @@ def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 
     if distribution == 'onehot_categorical':
         return dist.OneHotCategorical(logits=mu)
 
-    sigma_nonlin = params.distribution_base if sigma_nonlin is None else sigma_nonlin
-    sigma_param = params.distribution_sigma_param if sigma_param is None else sigma_param
-    beta = params.gradient_smoothing_beta
+    sigma_nonlin = model_params.distribution_base if sigma_nonlin is None else sigma_nonlin
+    sigma_param = model_params.distribution_sigma_param if sigma_param is None else sigma_param
+    beta = model_params.gradient_smoothing_beta
 
     if sigma_nonlin == 'logstd':
         sigma = torch.exp(sigma * beta)

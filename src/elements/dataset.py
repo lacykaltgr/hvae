@@ -22,7 +22,6 @@ class _DataSet(ABC):
         self.val_transform = val_transform
 
         train_data, val_data, test_data = self.load()
-
         self.train_set = self._FunctionalDataset(train_data, self.train_transform)
         self.val_set = self._FunctionalDataset(val_data, self.val_transform)
         self.test_set = self._FunctionalDataset(test_data, self.test_transform)

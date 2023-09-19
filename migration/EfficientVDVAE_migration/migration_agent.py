@@ -65,7 +65,7 @@ class EfficientVDVAEMigrationAgent:
                 for step in level:
                     for net_name, net in step.items():
                         if net_name == 'unpool':
-                            unpool_layers.extend([net])
+                            #unpool_layers.extend([net])
                             continue
                         if isinstance(levels_down_weights[levels_down_i][net_name], list):
                             for subnet in net:
@@ -132,6 +132,14 @@ class EfficientVDVAEMigrationAgent:
                             layer.bias.copy_(pool_weights[pool_i]['b'])
                             break
                     pool_i += 1
+
+            for i in range(len(pool_layers)):
+                if pool_layers[i] is not None:
+                    print(i)
+
+            for i in range(len(unpool_layers)):
+                if unpool_layers[i] is not None:
+                    print(i)
 
             print("Loaded weights for pool_layers.")
 
@@ -209,8 +217,7 @@ class EfficientVDVAEMigrationAgent:
             split = keys[i].split(".")  # bottom_up, levels_up_downsample 0, residual_block, 0, convs, 1, weight
             if split[0] == "bottom_up":
                 if 'pool' in split:
-                    # TODO
-                    print(split)
+                    pass
                 if split[1] == "levels_up_downsample":
 
                     if split[3] == "residual_block":
@@ -260,7 +267,6 @@ class EfficientVDVAEMigrationAgent:
                     top_down_number = 3
                 elif split[1] == 'levels_down':
                     top_down_number = 4
-
                 if split[1] == "trainable_h":
                     trainable_h_weights = values[i]
                     i += 1

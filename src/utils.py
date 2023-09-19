@@ -1,7 +1,7 @@
 import os
 import logging
 import json
-
+import pickle
 import numpy
 import numpy as np
 import torch
@@ -15,6 +15,39 @@ from hparams import get_hparams
 MODEL UTILS
 -------------------
 """
+
+
+class OrderedModuleDict(torch.nn.Module):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._keys = list()
+        self._values = ModuleList([])
+
+    def update(self, modules):
+        for key, module in modules.items():
+            self[key] = module
+
+    def __getitem__(self, key):
+        index = self._keys.index(key)
+        return self._values[index]
+
+    def __setitem__(self, key, module):
+        if key in self._keys:
+            raise KeyError(f"Key {key} already exists")
+        self._keys.append(key)
+        self._values.append(module)
+
+    def __len__(self):
+        return len(self.keys())
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def keys(self):
+        return self._keys
+
+    def values(self):
+        return self._values
 
 
 def scale_pixels(img, data_num_bits):
@@ -92,14 +125,15 @@ def split_mu_sigma(x, chunks=2, dim=1):
     if x.shape[dim] % chunks != 0:
         if x.shape[dim] == 1:
             return x, None
+        """
         raise ValueError(f"Can't split tensor of shape "
                          f"{x.shape} into {chunks} chunks "
-                         f"along dim {dim}")
-    mu, sigma = torch.chunk(x, chunks, dim=dim)
-    if mu.shape[dim] == 1:
-        mu = mu.squeeze(dim)
-        sigma = sigma.squeeze(dim)
-    return mu, sigma
+                         f"along dim {dim}")"""
+    chunks = torch.chunk(x, chunks, dim=dim)
+    if chunks[0].shape[dim] == 1:
+        for chunk in chunks:
+            chunk.squeeze(dim=dim)
+    return chunks
 
 
 """
@@ -107,16 +141,6 @@ def split_mu_sigma(x, chunks=2, dim=1):
 TRAIN/LOG UTILS
 -------------------
 """
-
-
-def get_root_dir(path: str):
-    if path is None:
-        return None
-    path_split = path.split("/")
-    assert path_split[-2] == "checkpoints"
-
-    path = path.split("checkpoints")[0]
-    return path
 
 
 def get_save_load_paths(mode='train'):
@@ -141,11 +165,12 @@ def get_save_load_paths(mode='train'):
         os.makedirs(save_dir, exist_ok=True)
         return load_from_file, save_dir
 
-    elif mode == 'synthesis':
-        load_from = p.load_from_synthesis
+    elif mode == 'analysis':
+        load_from = p.load_from_analysis
         assert load_from is not None
-        load_from_file = f'{p.dir}{p.name}/{load_from}'
-        save_dir = os.path.join(get_root_dir(load_from_file), "synthesis")
+        save_folder = os.path.join(p.dir, p.name)
+        load_from_file = os.path.join(save_folder, load_from)
+        save_dir = os.path.join(save_folder, "analysis")
         os.makedirs(save_dir, exist_ok=True)
         return load_from_file, save_dir
 
@@ -336,3 +361,9 @@ class NumpyEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
+
+
+def unpickle(file):
+    with open(file, 'rb') as fo:
+        dict = pickle.load(fo)
+    return dict

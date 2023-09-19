@@ -46,7 +46,7 @@ def main():
                             last_epoch=torch.tensor(gloabal_step),
                             checkpoint=checkpoint)
 
-    dataset = p.data_params.dataset
+    dataset = p.data_params.dataset(**p.data_params.params)
     train_loader = dataset.get_train_loader()
     val_loader = dataset.get_val_loader()
 

@@ -17,10 +17,13 @@ def main():
         _ = model(torch.ones((1, *p.data_params.shape)))
     model = model.to(p.model_params.device)
 
-    dataset = p.data_params.dataset
+    dataset = p.data_params.dataset(**p.data_params.params)
     val_loader = dataset.get_val_loader()
 
-    evaluate(model, val_loader, global_step=None, logger=None)
+    evaluate(model, val_loader,
+             use_mean=p.eval_params.use_mean,
+             global_step=None,
+             logger=None)
 
 
 if __name__ == '__main__':

@@ -47,7 +47,7 @@ class UnpooLayer(SerializableModule):
                nn.LeakyReLU(negative_slope=0.1),
                Interpolate(scale=self.strides)]
 
-        self.scale_bias: nn.Parameter or None = None
+        self.scale_bias: nn.Parameter | None = None
         self.ops = nn.Sequential(*ops)
 
     def reset_parameters(self, inputs):

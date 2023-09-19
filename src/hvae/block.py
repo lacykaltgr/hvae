@@ -470,19 +470,26 @@ class ResidualGenBlock(GenBlock):
                  z_projection,
                  input, condition,
                  concat_posterior: bool,
+                 prior_layer=None,
+                 posterior_layer=None,
                  output_distribution: str = 'normal'):
         super(ResidualGenBlock, self).__init__(
             prior_net, posterior_net, input, condition, concat_posterior, output_distribution)
         self.net: Sequential = get_net(net)
         self.z_projection: Sequential = get_net(z_projection)
+        self.prior_layer: Sequential = get_net(prior_layer)
+        self.posterior_layer: Sequential = get_net(posterior_layer)
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tensor, tuple):
 
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
+        kl_residual, y_prior = split_mu_sigma(y_prior, chunks=2)
+        y_prior = self.prior_layer(y_prior)
+        pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
         y_posterior = self.posterior_net(torch.cat([y, cond], dim=1)) # y, cond fordított sorrendben mint máshol
+        y_posterior = self.posterior_layer(y_posterior)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.sample() if not use_mean else posterior.mean
@@ -496,7 +503,9 @@ class ResidualGenBlock(GenBlock):
 
     def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> (tensor, tensor):
         y_prior = self.prior_net(y)
-        pm, pv, kl_residual = split_mu_sigma(y_prior, chunks=3)
+        kl_residual, y_prior = split_mu_sigma(y_prior, chunks=2)
+        y_prior = self.prior_layer(y_prior)
+        pm, pv = split_mu_sigma(y_prior)
         if t is not None:
             pv = pv + torch.ones_like(pv) * np.log(t)
         prior = generate_distribution(pm, pv, self.output_distribution)
@@ -507,18 +516,19 @@ class ResidualGenBlock(GenBlock):
     def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
-        z, x, distributions = self._sample(x, cond, variate_mask, use_mean)
-        x = x + self.z_projection(z)
-        x = self.net(x)
-        computed[self.output] = x
+        print(self.input, x.shape, self.condition, cond.shape)
+        z, y, distributions = self._sample(x, cond, variate_mask, use_mean)
+        y = y + self.z_projection(z)
+        y = self.net(y)
+        computed[self.output] = y
         return computed, distributions
 
     def sample_from_prior(self, computed: dict, t: float or int = None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
-        z, x, dist = self._sample_uncond(x, t, use_mean=use_mean)
-        x = x + self.z_projection(z)
-        x = self.net(x)
-        computed[self.output] = x
+        z, y, dist = self._sample_uncond(x, t, use_mean=use_mean)
+        y = y + self.z_projection(z)
+        y = self.net(y)
+        computed[self.output] = y
         return computed, dist
 
     def serialize(self) -> dict:

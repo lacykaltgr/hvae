@@ -7,10 +7,10 @@ import torch
 from torch import tensor
 from tqdm import tqdm
 
-from src.utils import NumpyEncoder, shuffle_along_axis
+from src.utils import NumpyEncoder, shuffle_along_axis, get_variate_masks
 from src.hparams import get_hparams
 from torch.utils.data import Dataset, DataLoader
-from src.hvae.model import reconstruct, prms, device, kl_divergence
+from src.hvae.model import reconstruct, device, kl_divergence
 
 NUM_TEXT_FAMILY = 5
 
@@ -42,7 +42,7 @@ def decodability_model(decodability_model, optimizer, loss, epochs, batch_size, 
     return accuracy
 
 
-def decodability(model, labeled_loader, filter_dict=None):
+def decodability(model, labeled_loader, filepath):
     p = get_hparams()
     decode_from_list = p.analysis_params.decodability.decode_from
     X = {layer: [] for layer in decode_from_list}
@@ -69,10 +69,22 @@ def decodability(model, labeled_loader, filter_dict=None):
                                       p.analysis_params.decodability.batch_size, decodability_dataset)
         accuracies[decode_from] = accuracy
 
+    with open(filepath, "w") as f:
+        json.dump(accuracies, f, cls=NumpyEncoder)
 
-def plot_reconstruction(net, dataloader, checkpoint_path, logger):
-    io_pairs = reconstruct(net, dataloader, latents_folder=None, logger=logger)
 
+def plot_reconstruction(net, dataloader, save_path, logger):
+    # Variate Masks
+    if get_hparams().analysis_params.reconstruction.mask_reconstruction:
+        div_stats = np.load(os.path.join(save_path, 'div_stats.npy'))
+        variate_masks = get_variate_masks(div_stats).astype(np.float32)
+    else:
+        variate_masks = None
+
+    # Reconstruction
+    io_pairs = reconstruct(net, dataloader, variate_masks=variate_masks, logger=logger)
+
+    # Plot
     row_titles = ["Original", "Sampled", "Mean"]
     n = len(io_pairs)
     m = len(row_titles)
@@ -81,14 +93,17 @@ def plot_reconstruction(net, dataloader, checkpoint_path, logger):
         ax.set_title(row, size='large')
     for i in range(n):
         for j in range(m):
-            axes[i, j].imshow(io_pairs[i][j], interpolation='none', cmap='gray')
-            axes[i, j].axis('off')
+            if io_pairs[i][j].shape[0] == 1:
+                io_pairs[i][j] = io_pairs[i][j][0]
+            image = io_pairs[i][j]
+            axes[j, i].imshow(image, interpolation='none', cmap='gray')
+            axes[j, i].axis('off')
 
     fig.tight_layout()
-    fig.savefig(os.path.join(checkpoint_path, "analysis", f"reconstruction.png"), facecolor="white")
+    fig.savefig(os.path.join(save_path, f"reconstruction.png"), facecolor="white")
 
 
-def latent_traversal(model, sample, target_block, n_cols, diff=0, value=1, checkpoint_path=None, n_dims=70):
+def latent_step_analysis(model, sample, target_block, save_path, n_cols=10, diff=1, value=1, n_dims=70):
     compute_target_block = model.compute_function(target_block)
     target_computed, _ = compute_target_block(sample)
     input_0 = target_computed[target_block]
@@ -113,13 +128,54 @@ def latent_traversal(model, sample, target_block, n_cols, diff=0, value=1, check
         ax[i // n_cols][i % n_cols].set_title(f"{i}")
         ax[i // n_cols][i % n_cols].axis('off')
 
-    path = os.path.join(checkpoint_path, "analysis", f"Z2_trav.png")
+    path = os.path.join(save_path, f"{target_block}_trav.png")
     plt.title(f"{target_block} traversal")
     fig.savefig(path, facecolor="white")
-    plt.show()
+
+
+def white_noise_analysis(model, target_block, save_path, shape, n_samples=1000000, sigma=0.6, n_cols=10):
+    import scipy
+
+    white_noise = np.random.normal(size=(n_samples, *shape), loc=0.0, scale=1.).astype(np.float32)
+
+    # apply ndimage.gaussian_filter with sigma=0.6
+    for i in range(n_samples):
+        white_noise[i, :, :] = scipy.ndimage.gaussian_filter(
+            white_noise[i, :, :], sigma=sigma)
+
+    compute_target_block = model.compute_function(target_block)
+    target_computed, _ = compute_target_block(torch.zeros((1, *shape)))
+    target_block_dim = target_computed[target_block].shape[1:]
+    target_block_values = np.zeros((n_samples, *target_block_dim), dtype=np.float32)
+
+    #loop over a batch of 128 white_noise images
+    for i in range(0, n_samples, 128):
+        batch = white_noise[i:i+128, :]
+        computed_target, _ = compute_target_block(torch.from_numpy(batch), use_mean=True)
+        target_block_values[i:i+128, :] = computed_target[target_block].numpy()
+
+    #multiply transpose of target block_values with white noise tensorially
+    receptive_fields = np.matmul(target_block_values.transpose(), white_noise) / np.sqrt(n_samples)
+
+    n_dims = receptive_fields.shape[0]
+    n_rows = int(np.ceil(n_dims / n_cols))
+
+    #plot receptive fields in a grid
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*2, n_rows*2))
+    for i in range(n_dims):
+        ax = axes[i // n_cols, i % n_cols]
+        ax.imshow(receptive_fields[i, :], interpolation='none', cmap="gray")
+        ax.axis("off")
+    fig.tight_layout()
+
+    wna_path = os.path.join(save_path, f"white_noise_analysis")
+    os.makedirs(wna_path, exist_ok=True)
+    np.save(os.path.join(wna_path, f"{target_block}_reverse_correlation.npy"), receptive_fields)
+    fig.savefig(os.path.join(wna_path, f"{target_block}_reverse_correlation.png"), facecolor="white")
 
 
 
+"""
 def get_mean_std(model, batch, target_block, filter_dict: dict = None, class_label=None):
     if class_label is not None:
         image_batch = batch[0][batch[1] == class_label]
@@ -175,7 +231,7 @@ def get_distribution_stats(model, ds, target_block, filter_dict=None, class_labe
     return average_means, average_stds, average_abs_means, std_means
 
 
-def generate_active_dim_plots(model, dataset, target_block, experiment_path):
+def generate_active_dim_plots(model, dataset, target_block, save_path):
     text_mean, text_std, text_abs_mean, std_mean = {}, {}, {}, {}
     for label in range(NUM_TEXT_FAMILY):
         text_mean[label], text_std[label], text_abs_mean[label], std_mean[label] = \
@@ -185,11 +241,9 @@ def generate_active_dim_plots(model, dataset, target_block, experiment_path):
     std_mean_df = pd.DataFrame(data=std_mean)  # std of posterior means
     text_std_df = pd.DataFrame(data=text_std)  # mean of posterior std
 
-    save_dir = os.path.join(experiment_path, "analysis", f"{target_block}_dim_plots")
-    os.makedirs(save_dir, exist_ok=True)
-    text_mean_path = os.path.join(save_dir, f"text_mean.png")
-    std_mean_path = os.path.join(save_dir, f"std_mean.png")
-    text_std_path = os.path.join(save_dir, f"text_std.png")
+    text_mean_path = os.path.join(save_path, f"{target_block}_text_mean.png")
+    std_mean_path = os.path.join(save_path, f"{target_block}_std_mean.png")
+    text_std_path = os.path.join(save_path, f"{target_block}_text_std.png")
 
     fig1 = text_mean_df.plot.bar(figsize=(20, 10), title='Average posterior means by texture families '
                                                          f'for each {target_block} latent variable')
@@ -244,6 +298,7 @@ def block_filters(model, target_block, checkpoint_path=None, value=1, num_dims=4
         with open(save_path, "w") as f:
             json.dump(filter_dict, f, cls=NumpyEncoder)
     return filter_dict
+"""
 
 
 def model_summary(net):
@@ -253,7 +308,7 @@ def model_summary(net):
     :return: None
     """
     from torchinfo import summary
-    shape = (1,) + prms.data_params.shape
+    shape = (1,) + get_hparams().data_params.shape
     return summary(net, input_size=shape, depth=7)
 
 
@@ -296,16 +351,17 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
     with torch.no_grad():
         for step, inputs in enumerate(tqdm(dataset)):
             inputs = inputs.to(device, non_blocking=True)
-            _, _, distributions = net(inputs)
+            _, distributions = net(inputs)
             avg_losses = []
 
-            distributions_for_kl = list(filter(lambda x: x[1] is not None, distributions))
-            for prior, posterior in distributions_for_kl:
+            for block_name, (prior, posterior) in distributions.items():
+                if block_name == 'output' or posterior is None:
+                    continue
                 _, avg_loss = kl_divergence(prior, posterior)
                 avg_losses.append(avg_loss)
             kl_div = torch.stack(avg_losses)
             per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
-            if step > prms.analysis_params.div_stats_subset_ratio * len(dataset):
+            if step > get_hparams().analysis_params.div_stats.div_stats_subset_ratio * len(dataset):
                 break
     per_dim_divs /= (step + 1)
     return per_dim_divs

@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch import tensor
 from collections import OrderedDict
+from src.utils import OrderedModuleDict
 
 from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleGenBlock, TopGenBlock
 from src.hvae.model import train, reconstruct, generate, evaluate
@@ -11,9 +12,9 @@ from src.hvae.analysis_tools import model_summary, compute_per_dimension_diverge
 
 
 class Encoder(nn.Module):
-    def __init__(self, encoder_blocks: nn.ModuleDict):
+    def __init__(self, encoder_blocks: OrderedModuleDict):
         super(Encoder, self).__init__()
-        self.blocks: nn.ModuleDict = encoder_blocks
+        self.blocks: OrderedModuleDict = encoder_blocks
 
     def forward(self, x: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
         computed = x
@@ -29,14 +30,12 @@ class Encoder(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, blocks: nn.ModuleDict):
+    def __init__(self, blocks: OrderedModuleDict):
         super(Generator, self).__init__()
-        self.blocks: nn.ModuleDict = blocks
+        self.blocks: OrderedModuleDict = blocks
 
     def forward(self, computed: dict, distributions: dict, variate_masks: list = None,
-                to_compute: str = None, use_mean: bool = False) \
-            -> (tensor, dict, list):
-
+                to_compute: str = None, use_mean: bool = False) -> (dict, dict):
         if variate_masks is None:
             variate_masks = [None] * len(self.blocks)
         assert len(variate_masks) == len(self.blocks)
@@ -65,25 +64,26 @@ class hVAE(nn.Module):
     def __init__(self, blocks: OrderedDict):
         super(hVAE, self).__init__()
 
-        self.input_block, output = next(((block, output) for output, block in blocks.items()
-                                         if isinstance(block, InputBlock)), None)
-        self.input_block.set_output(output)
-        encoder_blocks = nn.ModuleDict()
-        generator_blocks = nn.ModuleDict()
-        self.output_block, output = next(((block, output) for output, block in blocks.items()
-                                          if isinstance(block, OutputBlock)), None)
-        self.output_block.set_output(output)
+        encoder_blocks = OrderedModuleDict()
+        generator_blocks = OrderedModuleDict()
 
         in_generator = False
-        for output, block in blocks.items():
+        for i, (output, block) in enumerate(blocks.items()):
             block.set_output(output)
+            if i == 0:
+                assert isinstance(block, InputBlock)
+                self.input_block = block
+                continue
+            if i == len(blocks) - 1:
+                assert isinstance(block, OutputBlock)
+                self.output_block = block
+                continue
             if isinstance(block, (TopGenBlock, TopSimpleBlock)):
                 in_generator = True
-            if not isinstance(block, (InputBlock, OutputBlock)):
-                if in_generator:
-                    generator_blocks.update({output: block})
-                else:
-                    encoder_blocks.update({output: block})
+            if in_generator:
+                generator_blocks.update({output: block})
+            else:
+                encoder_blocks.update({output: block})
 
         self.encoder: Encoder = Encoder(encoder_blocks)
         self.generator: Generator = Generator(generator_blocks)
@@ -164,11 +164,11 @@ class hVAE(nn.Module):
         distributions['output'] = output_distribution
         return computed, distributions
 
-    def forward(self, x: tensor, variate_masks=None) -> (tensor, dict, dict):
+    def forward(self, x: tensor, variate_masks=None, use_mean=False) -> (dict, dict):
         computed = self.input_block(x)
-        computed, distributions = self.encoder(computed)
-        computed, distributions = self.generator(computed, distributions, variate_masks)
-        computed, output_distribution = self.output_block(computed)
+        computed, distributions = self.encoder(computed, use_mean=use_mean)
+        computed, distributions = self.generator(computed, distributions, variate_masks, use_mean=use_mean)
+        computed, output_distribution = self.output_block(computed, use_mean=use_mean)
         computed['output'] = computed[self.output_block.output]
         distributions['output'] = output_distribution
         return computed, distributions

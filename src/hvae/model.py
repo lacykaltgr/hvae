@@ -13,7 +13,7 @@ from src.checkpoint import Checkpoint
 from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
-from src.utils import tensorboard_log, get_variate_masks, linear_temperature, \
+from src.utils import tensorboard_log, linear_temperature, \
     prepare_for_log, print_line, log_to_csv
 
 prms = get_hparams()
@@ -41,15 +41,14 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
         return prms.loss_params.custom_loss(targets=targets, logits=logits,
                                             distributions=distributions, step_n=step_n)
 
-    output_distribution = distributions['output']
+    output_distribution = distributions['output'][0]
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
-    distributions_for_kl = list(filter(lambda key, value:
-                                       key != 'output' and value[1] is not None,
-                                       distributions.items()))
-    for prior, posterior in distributions_for_kl:
+    for block_name, (prior, posterior) in distributions.items():
+        if block_name == 'output' or posterior is None:
+            continue
         loss, avg_loss = kl_divergence(prior, posterior)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
@@ -120,7 +119,7 @@ def gradient_skip(global_norm):
     return skip, gradient_skip_counter_delta
 
 
-def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
+def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None, use_mean=False):
     """
     Perform a reconstruction with the given network and inputs
     based on Efficient-VDVAE paper
@@ -129,18 +128,19 @@ def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None):
     :param inputs: tensor, the input images
     :param variates_masks: list, the variate masks
     :param step_n: int, the current step number
+    :param use_mean: use the mean of the distributions instead of sampling
     :return: tensor, tensor, dict, the output images, the computed features, the loss values
     """
     net.eval()
     with torch.no_grad():
-        computed, distributions = net(inputs, variates_masks)
+        computed, distributions = net(inputs, variates_masks, use_mean=use_mean)
         if step_n is None:
             step_n = max(prms.loss_params.vae_beta_anneal_steps, prms.loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, distributions, step_n=step_n)
         return computed, distributions, results
 
 
-def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.Logger = None):
+def reconstruct(net, dataset: DataLoader, variate_masks=None, logger: logging.Logger = None):
     """
     Reconstruct the images from the given dataset
     based on Efficient-VDVAE paper
@@ -152,16 +152,13 @@ def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.L
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
-    if prms.analysis_params.mask_reconstruction:
-        div_stats = np.load(os.path.join(latents_folder, 'div_stats.npy'))
-        variate_masks = get_variate_masks(div_stats).astype(np.float32)
-    else:
-        variate_masks = None
 
     nelbos, ssims = 0., 0.
     io_pairs = list()
     step = 0
+    n_samples = prms.analysis_params.reconstruction.n_samples_for_reconstruction
     for step, inputs in enumerate(dataset):
+        n_samples -= prms.analysis_params.batch_size
         inputs = inputs.to(device)
         computed, distributions, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
         outputs = computed['output'].detach().cpu()
@@ -173,9 +170,10 @@ def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.L
         kl_div = loss['kl_div']
         nelbos += nelbo
 
-        output_samples = distributions['output'].sample()
-        output_means = distributions['output'].mean()
-        io_pairs = list(zip(inputs, output_samples, output_means))
+        output_samples = distributions['output'][0].sample()
+        output_means = distributions['output'][0].mean
+        for i in range(inputs.shape[0]):
+            io_pairs.append([inputs[i], output_samples[i], output_means[i]])
 
         logger.info(
             f'Step: {step:04d}  | '
@@ -183,6 +181,12 @@ def reconstruct(net, dataset: DataLoader, latents_folder=None, logger: logging.L
             f'Reconstruction: {rec_loss:.4f} | '
             f'kl_div: {kl_div:.4f}| '
             f'SSIM: {ssim_per_batch:.4f} ')
+
+        if n_samples <= 0:
+            break
+
+    if n_samples < 0:
+        io_pairs = io_pairs[:n_samples+prms.analysis_params.batch_size]
 
     nelbo = nelbos / (step + 1)
     ssim = ssims / (step + 1)
@@ -214,17 +218,19 @@ def generate(net, logger: logging.Logger):
     :return: list, the generated images
     """
     all_outputs = list()
-    for temp_i, temperature_setting in enumerate(prms.analysis_params.temperature_settings):
+    for temp_i, temperature_setting in enumerate(prms.analysis_params.generation.temperature_settings):
         logger.info(f'Generating for temperature setting {temp_i:01d}')
         if isinstance(temperature_setting, list):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)), net.generator.blocks)))
+                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)),
+                            net.generator.blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)), net.generator.blocks))
+            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)),
+                                      net.generator.blocks))
             temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
         else:
@@ -232,7 +238,7 @@ def generate(net, logger: logging.Logger):
             raise ValueError(f'Temperature Setting {temperature_setting} not interpretable!!')
 
         temp_outputs = list()
-        for step in range(prms.analysis_params.n_generation_batches):
+        for step in range(prms.analysis_params.generation.n_generation_batches):
             outputs = generation_step(net, temperatures=temperatures)
             temp_outputs.append(outputs)
 
@@ -276,7 +282,6 @@ def train(net,
           checkpoint_start_step: int,
           tb_writer_train: SummaryWriter, tb_writer_val: SummaryWriter,
           checkpoint_path: str, logger: logging.Logger) -> None:
-
     """
     Train the network
     based on Efficient-VDVAE paper
@@ -363,7 +368,7 @@ def train(net,
                 return
 
 
-def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: logging.Logger = None) -> tuple:
+def evaluate(net, val_loader: DataLoader, global_step: int = None, use_mean=False, logger: logging.Logger = None) -> tuple:
     """
     Evaluate the network on the given dataset
     based on Efficient-VDVAE paper
@@ -371,6 +376,7 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
     :param net: hVAE, the network
     :param val_loader: DataLoader, the dataset
     :param global_step: int, the current step number
+    :param use_mean: use the mean of the distributions instead of sampling
     :param logger: logging.Logger, the logger
     :return: dict, tensor, tensor, the loss values, the output images, the input images
     """
@@ -388,7 +394,7 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
         n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
         val_computed, val_distributions, val_results = \
-            reconstruction_step(net, inputs=val_inputs, step_n=global_step)
+            reconstruction_step(net, inputs=val_inputs, step_n=global_step, use_mean=use_mean)
         val_outputs = val_computed["output"]
 
         val_ssim_per_batch = ssim_metric(val_inputs, val_outputs, global_batch_size=prms.eval_params.batch_size)
@@ -420,5 +426,3 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, logger: loggi
         f' SSIM: {global_results["ssim"]:.6f}')
 
     return global_results, val_outputs, val_inputs
-
-

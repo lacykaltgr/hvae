@@ -10,47 +10,36 @@ def _model(migration):
         'x': InputBlock(net=migration.input_conv)
     })
     level_up_count = 0
-    level_n = -1
-    pool_layer_count = 0
     for i, (levels_up, level_up_downsample) in enumerate(zip(migration.levels_up, migration.levels_up_downsample)):
         for level_n, level_up in enumerate(levels_up):
             _blocks.update({
-                f'level_up_{level_up_count}':
+                f'level_up_{level_up_count}_{level_n}':
                     SimpleBlock(
                         net=level_up,
-                        input_id='x' if i == 0 and level_n == 0 else
-                                 f'level_up_downsample_{i-1}_pool' if level_n == 0 else
-                                 f'level_up_{level_up_count-1}'
+                        input_id=list(_blocks.keys())[-1].replace("_skip", "")
                     )
             })
-            if migration.pool_layers[pool_layer_count] is not None:
-                _blocks.update({
-                    f'level_up_downsample_{i}':
-                        SimpleBlock(
-                            net=migration.pool_layers[pool_layer_count],
-                            input_id=f'level_up_{level_up_count}'
-                        )})
-                pool_layer_count += 1
-            level_up_count += 1
 
         _blocks.update({
             f'level_up_{level_up_count}':
                 SimpleBlock(
                     net=level_up_downsample,
-                    input_id='x' if i == 0 and level_n == 0 else
-                             f'level_up_{level_up_count}_pool' if level_n != -1 else
-                             f'level_up_downsample_{i-1}_pool'
-        )})
+                    input_id=list(_blocks.keys())[-1]
+                ),
+            f'level_up_{level_up_count}_skip':
+                SimpleBlock(
+                    net=migration.skip_projections[level_up_count],
+                    input_id=list(_blocks.keys())[-1]
+                )
+        })
 
-        if migration.pool_layers[pool_layer_count] is not None:
+        if migration.pool_layers[level_up_count] is not None:
             _blocks.update({
                 f'level_up_{level_up_count}_pool':
                     SimpleBlock(
-                        net=migration.pool_layers[pool_layer_count],
+                        net=migration.pool_layers[level_up_count],
                         input_id=f'level_up_{level_up_count}'
                     )})
-            pool_layer_count += 1
-
         level_up_count += 1
 
     _blocks.update({'top': TopSimpleBlock(
@@ -61,42 +50,17 @@ def _model(migration):
     )})
 
     level_down_count = 0
-    unpool_layer_count = -1
     for i, (levels_down, level_down_upsample) in enumerate(zip(migration.levels_down, migration.levels_down_upsample)):
-        for level_n, level_down in enumerate(levels_down):
-            if migration.unpool_layers[unpool_layer_count] is not None:
-                _blocks.update({
-                    f'level_down_{level_down_count}_unpool':
-                        SimpleBlock(
-                            net=migration.unpool_layers[unpool_layer_count],
-                            input_id='top' if i == 0 and level_n == 0 else
-                                     f'level_down_{level_down_count}' if level_n != 0 else
-                                     f'level_down_upsample_{i-1}'
-                        )})
-                unpool_layer_count += 1
-            _blocks.update({
-                f'level_down_{level_down_count}':
-                    ResidualGenBlock(
-                        net=level_down["residual_block"],
-                        prior_net=level_down["prior_net"],
-                        posterior_net=level_down["posterior_net"],
-                        z_projection=level_down["z_projection"],
-                        input=f'level_down_{level_down_count}_unpool',
-                        condition=f"level_up_{level_up_count-1}",
-                    ),
-                }
-            )
-            level_down_count += 1
-            level_up_count -= 1
+        skip_input = f"level_up_{level_up_count-level_down_count-1}_skip"
 
-        if migration.unpool_layers[unpool_layer_count] is not None:
+        if migration.unpool_layers[level_down_count] is not None:
+            print(level_down_count)
             _blocks.update({
                 f'level_down_{level_down_count}_unpool':
                     SimpleBlock(
-                        net=migration.unpool_layers[unpool_layer_count],
-                        input_id=f'level_down_upsample_{level_down_count}'
+                        net=migration.unpool_layers[level_down_count],
+                        input_id=list(_blocks.keys())[-1]
                     )})
-            unpool_layer_count += 1
 
         _blocks.update({
             f'level_down_{level_down_count}':
@@ -105,16 +69,36 @@ def _model(migration):
                     prior_net=level_down_upsample["prior_net"],
                     posterior_net=level_down_upsample["posterior_net"],
                     z_projection=level_down_upsample["z_projection"],
-                    input=f'level_down_{level_down_count}_unpool',
-                    condition=f"level_up_{level_up_count-1}",
+                    prior_layer=level_down_upsample["prior_layer"],
+                    posterior_layer=level_down_upsample["posterior_layer"],
+                    input=list(_blocks.keys())[-1],
+                    condition=skip_input,
+                    concat_posterior=True,
                 )})
+
+        for level_n, level_down in enumerate(levels_down):
+            _blocks.update({
+                f'level_down_{level_down_count}_{level_n}':
+                    ResidualGenBlock(
+                        net=level_down["residual_block"],
+                        prior_net=level_down["prior_net"],
+                        posterior_net=level_down["posterior_net"],
+                        z_projection=level_down["z_projection"],
+                        prior_layer=level_down["prior_layer"],
+                        posterior_layer=level_down["posterior_layer"],
+                        input=list(_blocks.keys())[-1],
+                        condition=skip_input,
+                        concat_posterior=True,
+                    ),
+                }
+            )
+
         level_down_count += 1
-        level_up_count -= 1
 
     _blocks.update({
         'x_hat': OutputBlock(
             net=migration.output_conv,
-            input_id=f'level_down_{level_down_count-1}',
+            input_id=list(_blocks.keys())[-1],
             output_distribution='mol'
         )})
 
@@ -191,7 +175,7 @@ model_params = Hyperparams(
     gradient_smoothing_beta=0.6931472,
 
     # Num of mixtures in the MoL layer
-    num_output_mixtures=3,
+    num_output_mixtures=10,
     # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
     # Look at section 6 of the Efficient-VDVAE paper.
     min_mol_logscale=-250.,
@@ -202,20 +186,18 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.textures.textures import TexturesDataset as dataset
+from data.imagenet.imagenet import ImageNetDataSet as dataset
 
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 20, "old"),
+    dataset=dataset,
 
     # Data paths. Not used for (mnist, cifar-10)
-    train_data_path='../datasets/imagenet_32/train_data/',
-    val_data_path='../datasets/imagenet_32/val_data/',
-    synthesis_data_path='../datasets/imagenet_32/val_data/',
+    root_path='data/imagenet/dataset',
 
     # Image metadata
-    shape=(1, 20, 20),
+    shape=(3, 32, 32),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -339,58 +321,121 @@ eval_params = Hyperparams(
 
 """
 --------------------
-SYNTHESIS HYPERPARAMETERS
+ANALYSIS HYPERPARAMETERS
 --------------------
 """
-synthesis_params = Hyperparams(
-    # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats')
-    synthesis_mode='reconstruction',
+
+analysis_params = Hyperparams(
+    # The synthesized mode can be a subset of
+    # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'gabor', 'latent_traversal')
+    ops=['reconstruction', 'generation'],
 
     # inference batch size (all modes)
-    # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
     batch_size=32,
 
-    # Reconstruction/Encoding mode
+    # Latent traversal mode
     # --------------------
-    # Defines the quantile at which to prune the latent space (section 7). Example:
-    # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-    # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-    # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-    # suitable value of variate_masks_quantile before running encoding mode.
-    variate_masks_quantile=0.03,
+    reconstrcution=Hyperparams(
+        n_samples_for_reconstruction=32,
+        # The quantile at which to prune the latent space
+        # Example:
+        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
+        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
+        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
+        # suitable value of variate_masks_quantile before running encoding mode.
+        mask_reconstruction=False,
+        variate_masks_quantile=0.03,
+    ),
 
-    # Reconstruction mode
+    # Latent traversal mode
     # --------------------
-    # Whether to save the targets during reconstruction (for debugging)
-    save_target_in_reconstruction=False,
-    # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
-    # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
-    # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
-    # hurt NLL.
-    mask_reconstruction=False,
+    latent_step_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                diff=1,
+                value=1,
+                n_dims=70,
+                n_cols=10,
+            )
+        )
+    ),
+
+    # White noise analysis mode
+    # --------------------
+    white_noise_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                n_samples=1000,
+                sigma=1.,
+                n_cols=10,
+            )
+        )
+    ),
+
+    # Most Exciting Input (MEI) mode
+    # --------------------
+    mei=Hyperparams(
+        queries=dict(
+            z=dict(
+                neuron_query=0,
+                iter_n=1000,  # number of iterations
+                start_sigma=1.5,
+                end_sigma=0.01,
+                start_step_size=3.0,
+                end_step_size=0.125,
+                precond=0,  # strength of gradient preconditioning filter falloff
+                step_gain=0.1,  # scaling of gradient steps
+                jitter=0,  # size of translational jittering
+                blur=True,
+                norm=-1,  # norm adjustment after step, negative to turn off
+                train_norm=-1,  # norm adjustment during step, negative to turn off
+                clip=True  # Whether to clip the range of the image to be in valid range
+            ),
+            y=dict(),
+
+        )
+
+    ),
+    gabor=Hyperparams(
+        queries=dict(
+            z=0,
+            y=1,
+        )
+    ),
+
 
     # Div_stats mode
     # --------------------
-    # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-    # reconstruction and encoding). Set to 1. to use the full training dataset.
-    # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-    div_stats_subset_ratio=0.2,
+    div_stats=Hyperparams(
+        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
+        # reconstruction and encoding). Set to 1. to use the full training dataset.
+        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
+        div_stats_subset_ratio=0.2
+    ),
+
+    # Decodability mode
+    # --------------------
+
+    decodability=Hyperparams(
+    ),
 
     # Generation_mode
     # --------------------
-    # Number of generated batches per temperature from the temperature_settings list.
-    n_generation_batches=1,
-    # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
-    # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
-    # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
-    # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
-    # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
-    # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
-    # respective top-down blocks.
-    temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
-                          ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
-    # Temperature of the output layer (usually kept at 1. for extra realism)
-    output_temperature=1.,
+    generation=Hyperparams(
+        # Number of generated batches per temperature from the temperature_settings list.
+        n_generation_batches=1,
+        # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
+        # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
+        # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
+        # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
+        # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
+        # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
+        # respective top-down blocks.
+        temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
+                              ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
+        # Temperature of the output layer (usually kept at 1. for extra realism)
+        output_temperature=1.
+    )
 )
 
 """

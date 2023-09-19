@@ -88,10 +88,13 @@ def chainVAE_loss(targets: torch.tensor, distributions: list, **kwargs) -> dict:
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
+from migration.ChainVAE_migration.migration_agent import ChainVAEMigrationAgent
+
 migration_params = Hyperparams(
     params=dict(
         path="migration/ChainVAE_migration/weights/TD_comparison_40"
-    )
+    ),
+    migration_agent=ChainVAEMigrationAgent
 )
 
 """
@@ -115,7 +118,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-11__13-29/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-09-18__16-04/migrated_checkpoint.pth',
 
 
     # SYNTHESIS

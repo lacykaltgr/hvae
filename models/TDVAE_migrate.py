@@ -67,12 +67,25 @@ from src.hparams import Hyperparams
 
 """
 --------------------
+MIGRATION HYPERPARAMETERS
+--------------------
+"""
+from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent
+migration_params = Hyperparams(
+    params=dict(
+        path="migration/TDVAE_migration/weights_TDVAE40125/eval_TDVAE40125/mycurl-17250000"
+    ),
+    migration_agent=TDVAEMigrationAgent
+)
+
+"""
+--------------------
 LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE40125_migrate',
+    name='TDVAE40n_migrate',
 
     # TRAIN LOG
     # --------------------
@@ -85,11 +98,11 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-06__14-55/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-09-19__21-11/migrated_checkpoint.pth',
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='migration/2023-09-05__09-53/checkpoints/checkpoint-0.pth',
+    load_from_analysis='migration/2023-09-19__21-11/migrated_checkpoint.pth',
 )
 
 """
@@ -125,12 +138,13 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.textures.textures import TexturesDataset as dataset
+from data.textures.textures import TexturesDataset
 
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 40, "old"),
+    dataset=TexturesDataset,
+    params=dict(type="natural", image_size=40, whitening="old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -254,13 +268,15 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    n_samples_for_validation=5000,
+    n_samples_for_validation=10000,
     # validation batch size
     batch_size=128,
 
+    use_mean=True,
+
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
+    latent_active_threshold=1e-4,
 )
 
 """
@@ -271,33 +287,49 @@ ANALYSIS HYPERPARAMETERS
 
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'gabor', 'latent_traversal')
-    ops=['reconstruction', 'generation'],
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'mei', 'gabor', 'latent_step_analysis')
+    ops=['reconstruction', 'generation', 'white_noise_analysis', 'latent_step'],
 
     # inference batch size (all modes)
     batch_size=32,
 
     # Latent traversal mode
     # --------------------
-    reconstrcution=Hyperparams(
-        # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
-        # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
-        # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
-        # hurt NLL.
-        mask_reconstruction=False,
-        # Defines the quantile at which to prune the latent space (section 7). Example:
+    reconstruction=Hyperparams(
+        n_samples_for_reconstruction=3,
+        # The quantile at which to prune the latent space
+        # Example:
         # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
         # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
         # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
         # suitable value of variate_masks_quantile before running encoding mode.
+        mask_reconstruction=False,
         variate_masks_quantile=0.03,
     ),
 
     # Latent traversal mode
     # --------------------
-    latent_traversal=Hyperparams(
-        # Number of samples to generate per latent traversal
-        n_samples_per_latent_traversal=10,
+    latent_step_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                diff=1,
+                value=1,
+                n_dims=70,
+                n_cols=10,
+            )
+        )
+    ),
+
+    # White noise analysis mode
+    # --------------------
+    white_noise_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                n_samples=1000,
+                sigma=1.,
+                n_cols=10,
+            )
+        )
     ),
 
     # Most Exciting Input (MEI) mode
@@ -331,9 +363,6 @@ analysis_params = Hyperparams(
         )
     ),
 
-    # Distribution stats mode
-    # --------------------
-    dist_stats=Hyperparams(),
 
     # Div_stats mode
     # --------------------
