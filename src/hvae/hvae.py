@@ -25,7 +25,7 @@ class Encoder(nn.Module):
             if dists:
                 distributions[block.output] = dists
             if to_compute is not None and to_compute in computed:
-                return computed
+                return computed, distributions
         return computed, distributions
 
 
@@ -100,10 +100,12 @@ class hVAE(nn.Module):
             computed, distributions = self.encoder(computed, to_compute=block_name, use_mean=use_mean)
             if block_name in computed.keys():
                 return computed, distributions
-            computed, _ = self.generator(computed, distributions, to_compute=block_name, use_mean=use_mean)
+            computed, distributions = self.generator(computed, distributions, to_compute=block_name, use_mean=use_mean)
             if block_name in computed.keys():
                 return computed, distributions
-            computed, distributions = self.output_block(computed, use_mean=use_mean)
+            computed, distribution = self.output_block(computed, use_mean=use_mean)
+            computed['output'] = computed[self.output_block.output]
+            distributions['output'] = distribution
             return computed, distributions
         return compute
 

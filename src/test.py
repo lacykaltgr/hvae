@@ -1,8 +1,8 @@
 import torch
 
-from hparams import get_hparams
-from utils import load_experiment_for
-from hvae.model import evaluate
+from src.hparams import get_hparams
+from src.utils import load_experiment_for
+from src.hvae.model import evaluate
 
 
 def main():

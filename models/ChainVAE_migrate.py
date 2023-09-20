@@ -45,19 +45,19 @@ def _model(migration):
     return __model
 
 
-def chainVAE_loss(targets: torch.tensor, distributions: list, **kwargs) -> dict:
+def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
     from src.elements.losses import get_kl_loss
     kl_divergence = get_kl_loss()
 
     beta1 = 1
     beta2 = 1
 
-    q_z1_x =    distributions[0][0]
+    q_z1_x =    distributions['hiddens'][0]
     z1_sample = q_z1_x.sample()
-    p_z2_z1 =   distributions[1][0]
-    q_z2_z1 =   distributions[1][1]
-    p_z1_z2 =   distributions[2][0]
-    p_x_z1 =    distributions[3][0]
+    p_z2_z1 =   distributions['y'][0]
+    q_z2_z1 =   distributions['y'][1]
+    p_z1_z2 =   distributions['z'][0]
+    p_x_z1 =    distributions['output'][0]
 
     nll = torch.mean(-p_x_z1.log_prob(targets))
 
@@ -123,7 +123,7 @@ log_params = Hyperparams(
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-27__23-22/checkpoints/checkpoint-450.pth',
+    load_from_analysis='migration/2023-09-20__13-53/migrated_checkpoint.pth',
 )
 
 """
@@ -159,11 +159,12 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.textures.textures import TexturesDataset as dataset
+from data.textures.textures import TexturesDataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset("natural", 40, "old"),
+    dataset=TexturesDataset,
+    params=dict(type="natural", image_size=40, whitening="old"),
 
     # Data paths. Not used for (mnist, cifar-10)
     train_data_path='../datasets/imagenet_32/train_data/',
@@ -299,55 +300,124 @@ eval_params = Hyperparams(
 SYNTHESIS HYPERPARAMETERS
 --------------------
 """
-synthesis_params = Hyperparams(
-    # The synthesized mode can be one of ('reconstruction', 'generation', 'div_stats')
-    synthesis_mode='div_stats',
+analysis_params = Hyperparams(
+    # The synthesized mode can be a subset of
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'mei', 'gabor', 'latent_step_analysis')
+    ops=['mei'],
 
     # inference batch size (all modes)
-    # The inference batch size is global for all GPUs for JAX only. Pytorch does not support multi-GPU inference.
     batch_size=32,
 
-    # Reconstruction/Encoding mode
+    # Latent traversal mode
     # --------------------
-    # Defines the quantile at which to prune the latent space (section 7). Example:
-    # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-    # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-    # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-    # suitable value of variate_masks_quantile before running encoding mode.
-    variate_masks_quantile=0.03,
+    reconstruction=Hyperparams(
+        n_samples_for_reconstruction=3,
+        # The quantile at which to prune the latent space
+        # Example:
+        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
+        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
+        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
+        # suitable value of variate_masks_quantile before running encoding mode.
+        mask_reconstruction=False,
+        variate_masks_quantile=0.03,
+    ),
 
-    # Reconstruction mode
+    # Latent traversal mode
     # --------------------
-    # Whether to save the targets during reconstruction (for debugging)
-    save_target_in_reconstruction=False,
-    # Whether to prune the posteriors to variate_masks_quantile. If set to True, the reconstruction is run with only
-    # variate_masks_quantile posteriors. All the other variates will be replaced with the prior. Used to compute the
-    # NLL at different % of prune posteriors, and to determine an appropriate variate_masks_quantile that doesn't
-    # hurt NLL.
-    mask_reconstruction=False,
+    latent_step_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                diff=1,
+                value=1,
+                n_dims=70,
+                n_cols=10,
+            )
+        )
+    ),
+
+    # White noise analysis mode
+    # --------------------
+    white_noise_analysis=Hyperparams(
+        queries=dict(
+            z=dict(
+                n_samples=1000,
+                sigma=1.,
+                n_cols=10,
+            )
+        )
+    ),
+
+    # Most Exciting Input (MEI) mode
+    # --------------------
+    mei=Hyperparams(
+        queries=dict(
+            z=dict(
+                neuron_query=0,
+                iter_n=1000,  # number of iterations
+                start_sigma=1.5,
+                end_sigma=0.01,
+                start_step_size=3.0,
+                end_step_size=0.125,
+                precond=0,  # strength of gradient preconditioning filter falloff
+                step_gain=0.1,  # scaling of gradient steps
+                jitter=0,  # size of translational jittering
+                blur=True,
+                norm=-1,  # norm adjustment after step, negative to turn off
+                train_norm=-1,  # norm adjustment during step, negative to turn off
+                clip=True  # Whether to clip the range of the image to be in valid range
+            ),
+            y=dict(),
+
+        )
+
+    ),
+    gabor=Hyperparams(
+        queries=dict(
+            z=0,
+            y=1,
+        )
+    ),
+
 
     # Div_stats mode
     # --------------------
-    # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-    # reconstruction and encoding). Set to 1. to use the full training dataset.
-    # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-    div_stats_subset_ratio=0.2,
+    div_stats=Hyperparams(
+        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
+        # reconstruction and encoding). Set to 1. to use the full training dataset.
+        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
+        div_stats_subset_ratio=0.2
+    ),
+
+    # Decodability mode
+    # --------------------
+
+    decodability=Hyperparams(
+        model=None,
+        optimizer='Adam',
+        loss="bce",
+        epcohs=100,
+        learning_rate=1e-3,
+        batch_size=32,
+        decode_from=['z', 'y'],
+    ),
 
     # Generation_mode
     # --------------------
-    # Number of generated batches per temperature from the temperature_settings list.
-    n_generation_batches=1,
-    # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
-    # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
-    # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
-    # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
-    # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
-    # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
-    # respective top-down blocks.
-    temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
-                          ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
-    # Temperature of the output layer (usually kept at 1. for extra realism)
-    output_temperature=1.,
+    generation=Hyperparams(
+        # Number of generated batches per temperature from the temperature_settings list.
+        n_generation_batches=1,
+        # Temperatures for unconditional generation from the prior. We generate n_generation_batches for each element of
+        # the temperature_settings list. This is implemented so that many temperatures can be tested in the same run for
+        # speed. The temperature_settings elements can be one of: - A float: Example 0.8. Defines the temperature used
+        # for all the latent variates of the model - A tuple of 3: Example ('linear', 0.6, 0.9). Defines a linearly
+        # increasing temperature scheme from the deepest to shallowest top-down block. (different temperatures per latent
+        # group) - A list of size len(down_strides): Each element of the list defines the temperature for their
+        # respective top-down blocks.
+        temperature_settings=[0.8, 0.85, 0.9, 1., ('linear', 0.7, 0.9), ('linear', 0.9, 0.7), ('linear', 0.8, 1.),
+                              ('linear', 1., 0.8), ('linear', 0.8, 0.9)],
+        # Temperature of the output layer (usually kept at 1. for extra realism)
+        output_temperature=1.
+    )
 )
 
 """

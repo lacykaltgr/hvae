@@ -287,8 +287,9 @@ ANALYSIS HYPERPARAMETERS
 
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'mei', 'gabor', 'latent_step_analysis')
-    ops=['reconstruction', 'generation', 'white_noise_analysis', 'latent_step'],
+    # ('reconstruction', 'generation', div_stats', 'decodability',
+    # 'mei', 'gabor', 'latent_step_analysis', 'white_noise_analysis')
+    ops=['white_noise_analysis'],
 
     # inference batch size (all modes)
     batch_size=32,
@@ -324,10 +325,10 @@ analysis_params = Hyperparams(
     # --------------------
     white_noise_analysis=Hyperparams(
         queries=dict(
-            z=dict(
-                n_samples=1000,
+            y=dict(
+                n_samples=1000000,
                 sigma=1.,
-                n_cols=10,
+                n_cols=25,
             )
         )
     ),

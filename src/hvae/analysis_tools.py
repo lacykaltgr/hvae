@@ -133,15 +133,18 @@ def latent_step_analysis(model, sample, target_block, save_path, n_cols=10, diff
     fig.savefig(path, facecolor="white")
 
 
-def white_noise_analysis(model, target_block, save_path, shape, n_samples=1000000, sigma=0.6, n_cols=10):
+def white_noise_analysis(model, target_block, save_path, shape, n_samples=100, sigma=0.6, n_cols=10):
     import scipy
 
-    white_noise = np.random.normal(size=(n_samples, *shape), loc=0.0, scale=1.).astype(np.float32)
+    if shape[0] == 1:
+        shape = shape[1:]
+
+    white_noise = np.random.normal(size=(n_samples, np.prod(shape)), loc=0.0, scale=1.).astype(np.float32)
 
     # apply ndimage.gaussian_filter with sigma=0.6
     for i in range(n_samples):
-        white_noise[i, :, :] = scipy.ndimage.gaussian_filter(
-            white_noise[i, :, :], sigma=sigma)
+        white_noise[i, :] = scipy.ndimage.gaussian_filter(
+            white_noise[i, :].reshape(shape), sigma=sigma).reshape(np.prod(shape))
 
     compute_target_block = model.compute_function(target_block)
     target_computed, _ = compute_target_block(torch.zeros((1, *shape)))
@@ -152,7 +155,7 @@ def white_noise_analysis(model, target_block, save_path, shape, n_samples=100000
     for i in range(0, n_samples, 128):
         batch = white_noise[i:i+128, :]
         computed_target, _ = compute_target_block(torch.from_numpy(batch), use_mean=True)
-        target_block_values[i:i+128, :] = computed_target[target_block].numpy()
+        target_block_values[i:i+128, :] = computed_target[target_block].detach().numpy()
 
     #multiply transpose of target block_values with white noise tensorially
     receptive_fields = np.matmul(target_block_values.transpose(), white_noise) / np.sqrt(n_samples)
@@ -164,7 +167,8 @@ def white_noise_analysis(model, target_block, save_path, shape, n_samples=100000
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*2, n_rows*2))
     for i in range(n_dims):
         ax = axes[i // n_cols, i % n_cols]
-        ax.imshow(receptive_fields[i, :], interpolation='none', cmap="gray")
+        ax.imshow(receptive_fields[i, :].reshape(shape), interpolation='none', cmap="gray")
+        ax.set_title(f"{i}")
         ax.axis("off")
     fig.tight_layout()
 
@@ -316,12 +320,15 @@ def generate_mei(model, target_block, query_config):
     from meitorch.mei import MEI
 
     def get_target_block(x):
-        compute_function = model.compute_function(target_block)
+        compute_function = model.compute_function(target_block, use_mean=True)
         computed, _ = compute_function(x)
         return computed[target_block]
 
-    mei = MEI(models=[get_target_block], shape=(3, 32, 32))
+    mei = MEI(models=[get_target_block], shape=get_hparams().data_params.shape)
     meip = mei.generate(**query_config)           # Whether to clip the range of the image to be in valid range
+
+    from matplotlib.pyplot import imsave
+    imsave('mei.png', meip.image.detach().cpu().numpy())
     return meip
 
 

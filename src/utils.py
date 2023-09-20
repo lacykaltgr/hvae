@@ -8,7 +8,7 @@ import torch
 from torch.nn import Sequential, Module, ModuleList
 from torch.utils.tensorboard import SummaryWriter
 
-from hparams import get_hparams
+from src.hparams import get_hparams
 
 """
 -------------------
