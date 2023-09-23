@@ -67,9 +67,13 @@ def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
     reg1 += torch.mean(-p_z1_z2.log_prob(z1_sample))
     reg1 *= beta1
 
+    avg_var_prior_losses.append(reg1)
+
     kl2, avg_kl2 = kl_divergence(q_z2_z1, p_z2_z1)
     kl2 = torch.mean(kl2)
     kl2 *= beta2
+
+    avg_var_prior_losses.append(avg_kl2)
 
     kl_div = reg1 + kl2
     elbo = nll + kl_div
@@ -88,8 +92,12 @@ def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
+"""
+--------------------
+MIGRATION HYPERPARAMETERS
+--------------------
+"""
 from migration.ChainVAE_migration.migration_agent import ChainVAEMigrationAgent
-
 migration_params = Hyperparams(
     params=dict(
         path="migration/ChainVAE_migration/weights/TD_comparison_40"
@@ -118,12 +126,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-18__16-04/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-09-23__16-01/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_analysis='migration/2023-09-20__13-53/migrated_checkpoint.pth',
+    load_from_analysis='migration/2023-09-23__16-01/migrated_checkpoint.pth',
 )
 
 """
@@ -166,11 +174,6 @@ data_params = Hyperparams(
     dataset=TexturesDataset,
     params=dict(type="natural", image_size=40, whitening="old"),
 
-    # Data paths. Not used for (mnist, cifar-10)
-    train_data_path='../datasets/imagenet_32/train_data/',
-    val_data_path='../datasets/imagenet_32/val_data/',
-    synthesis_data_path='../datasets/imagenet_32/val_data/',
-
     # Image metadata
     shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
@@ -187,6 +190,10 @@ train_params = Hyperparams(
     total_train_steps=640000,
     # training batch size
     batch_size=128,
+
+    # Freeze spceific layers
+    unfreeze_first=False,
+    freeze_nets=[],
 )
 
 """
@@ -285,10 +292,11 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    #TODO: implement
     n_samples_for_validation=5000,
     # validation batch size
     batch_size=128,
+
+    use_mean=True,
 
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
@@ -302,8 +310,9 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'mei', 'gabor', 'latent_step_analysis')
-    ops=['mei'],
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei', 'gabor'
+    ops=['reconstruction', 'white_noise_analysis'],
 
     # inference batch size (all modes)
     batch_size=32,
@@ -340,9 +349,9 @@ analysis_params = Hyperparams(
     white_noise_analysis=Hyperparams(
         queries=dict(
             z=dict(
-                n_samples=1000,
+                n_samples=100000,
                 sigma=1.,
-                n_cols=10,
+                n_cols=100,
             )
         )
     ),
@@ -351,30 +360,11 @@ analysis_params = Hyperparams(
     # --------------------
     mei=Hyperparams(
         queries=dict(
-            z=dict(
-                neuron_query=0,
-                iter_n=1000,  # number of iterations
-                start_sigma=1.5,
-                end_sigma=0.01,
-                start_step_size=3.0,
-                end_step_size=0.125,
-                precond=0,  # strength of gradient preconditioning filter falloff
-                step_gain=0.1,  # scaling of gradient steps
-                jitter=0,  # size of translational jittering
-                blur=True,
-                norm=-1,  # norm adjustment after step, negative to turn off
-                train_norm=-1,  # norm adjustment during step, negative to turn off
-                clip=True  # Whether to clip the range of the image to be in valid range
-            ),
-            y=dict(),
-
         )
 
     ),
     gabor=Hyperparams(
         queries=dict(
-            z=0,
-            y=1,
         )
     ),
 
@@ -435,7 +425,8 @@ mlp_params = Hyperparams(
     hidden_sizes=[],
     output_size=1000,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True
 )
 
 cnn_params = Hyperparams(

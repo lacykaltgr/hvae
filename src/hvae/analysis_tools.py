@@ -12,8 +12,6 @@ from src.hparams import get_hparams
 from torch.utils.data import Dataset, DataLoader
 from src.hvae.model import reconstruct, device, kl_divergence
 
-NUM_TEXT_FAMILY = 5
-
 
 class Decodability_dataset(Dataset):
     def __init__(self, X, Y):

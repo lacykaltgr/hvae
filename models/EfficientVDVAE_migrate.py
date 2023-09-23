@@ -114,6 +114,12 @@ def _model(migration):
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
+
+"""
+--------------------
+MIGRATION HYPERPARAMETERS
+--------------------
+"""
 from migration.EfficientVDVAE_migration.migration_agent import EfficientVDVAEMigrationAgent
 migration_params = Hyperparams(
     params=dict(
@@ -123,6 +129,8 @@ migration_params = Hyperparams(
     ),
     migration_agent=EfficientVDVAEMigrationAgent,
 )
+
+
 
 """
 --------------------
@@ -139,18 +147,18 @@ log_params = Hyperparams(
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-
     load_from_train=None,
     dir_naming_scheme='timestamp',
 
 
     # EVAL
     # --------------------
-    load_from_eval='2023-08-28__11-17/checkpoints/checkpoint-150.pth',
+    load_from_eval='path_to_directory/checkpoint.pth',
+
 
     # SYNTHESIS
     # --------------------
-    load_from_synthesis='2023-08-28__11-17/checkpoints/checkpoint-150.pth',
+    load_from_analysis='path_to_directory/checkpoint.pth',
 )
 
 """
@@ -175,7 +183,7 @@ model_params = Hyperparams(
     gradient_smoothing_beta=0.6931472,
 
     # Num of mixtures in the MoL layer
-    num_output_mixtures=10,
+    num_output_mixtures=3,
     # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
     # Look at section 6 of the Efficient-VDVAE paper.
     min_mol_logscale=-250.,
@@ -186,18 +194,15 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.imagenet.imagenet import ImageNetDataSet as dataset
-
+from data.textures.textures import TexturesDataset
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=dataset,
-
-    # Data paths. Not used for (mnist, cifar-10)
-    root_path='data/imagenet/dataset',
+    dataset=TexturesDataset,
+    params=dict(type="natural", image_size=40, whitening="old"),
 
     # Image metadata
-    shape=(3, 32, 32),
+    shape=(1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -212,6 +217,10 @@ train_params = Hyperparams(
     total_train_steps=640000,
     # training batch size
     batch_size=128,
+
+    # Freeze spceific layers
+    unfreeze_first=False,
+    freeze_nets=[],
 )
 
 """
@@ -251,6 +260,7 @@ optimizer_params = Hyperparams(
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
 
+
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
     clip_gradient_norm=False,
@@ -273,7 +283,7 @@ LOSS HYPERPARAMETERS
 loss_params = Hyperparams(
     reconstruction_loss="default",
     kldiv_loss="default",
-    custom_loss=None,
+    custom_loss=chainVAE_loss,
 
     # ELBO beta warmup (from NVAE).
     # Doesn't make much of an effect
@@ -309,10 +319,11 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    # TODO: implement
     n_samples_for_validation=5000,
     # validation batch size
     batch_size=128,
+
+    use_mean=True,
 
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
@@ -321,22 +332,22 @@ eval_params = Hyperparams(
 
 """
 --------------------
-ANALYSIS HYPERPARAMETERS
+SYNTHESIS HYPERPARAMETERS
 --------------------
 """
-
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', 'dist_stats', div_stats', 'decodability', 'mei', 'gabor', 'latent_traversal')
-    ops=['reconstruction', 'generation'],
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei', 'gabor'
+    ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
 
     # Latent traversal mode
     # --------------------
-    reconstrcution=Hyperparams(
-        n_samples_for_reconstruction=32,
+    reconstruction=Hyperparams(
+        n_samples_for_reconstruction=3,
         # The quantile at which to prune the latent space
         # Example:
         # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
@@ -376,30 +387,11 @@ analysis_params = Hyperparams(
     # --------------------
     mei=Hyperparams(
         queries=dict(
-            z=dict(
-                neuron_query=0,
-                iter_n=1000,  # number of iterations
-                start_sigma=1.5,
-                end_sigma=0.01,
-                start_step_size=3.0,
-                end_step_size=0.125,
-                precond=0,  # strength of gradient preconditioning filter falloff
-                step_gain=0.1,  # scaling of gradient steps
-                jitter=0,  # size of translational jittering
-                blur=True,
-                norm=-1,  # norm adjustment after step, negative to turn off
-                train_norm=-1,  # norm adjustment during step, negative to turn off
-                clip=True  # Whether to clip the range of the image to be in valid range
-            ),
-            y=dict(),
-
         )
 
     ),
     gabor=Hyperparams(
         queries=dict(
-            z=0,
-            y=1,
         )
     ),
 
@@ -417,6 +409,13 @@ analysis_params = Hyperparams(
     # --------------------
 
     decodability=Hyperparams(
+        model=None,
+        optimizer='Adam',
+        loss="bce",
+        epcohs=100,
+        learning_rate=1e-3,
+        batch_size=32,
+        decode_from=['z', 'y'],
     ),
 
     # Generation_mode
@@ -444,7 +443,6 @@ BLOCK HYPERPARAMETERS
 --------------------
 """
 import torch
-
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -454,7 +452,8 @@ mlp_params = Hyperparams(
     hidden_sizes=[],
     output_size=1000,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True
 )
 
 cnn_params = Hyperparams(
@@ -485,6 +484,8 @@ unpool_params = Hyperparams(
     filters=3,
     strides=2,
 )
+
+
 
 """
 --------------------

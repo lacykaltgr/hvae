@@ -341,7 +341,7 @@ def train(net,
                 train_ssim = ssim_metric(train_inputs, train_outputs, global_batch_size=prms.train_params.batch_size)
                 logger.info(
                     f'Train Stats for global_step {global_step} | NELBO {train_results["elbo"]} | 'f'SSIM: {train_ssim}')
-                val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger)
+                val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger=logger)
                 val_results = prepare_for_log(val_results)
                 log_to_csv(val_results, checkpoint_path, 'val')
                 # Tensorboard logging
@@ -406,17 +406,13 @@ def evaluate(net, val_loader: DataLoader, global_step: int = None, use_mean=Fals
             else [u + v for u, v in zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
         if n_samples <= 0:
             break
-
     global_results = dict(
         reconstruction_loss=val_feature_matching_losses / (val_step + 1),
         kl_div=val_kl_divs / (val_step + 1),
         ssim=val_ssim / (val_step + 1),
         avg_var_prior_losses=val_global_varprior_losses,
-        global_varprior_losses=[v / (val_step + 1) for v in val_global_varprior_losses],
-        varprior_loss=np.sum([v.detach().cpu() for v in val_global_varprior_losses]),
     )
     global_results["elbo"] = global_results["kl_div"] + global_results["reconstruction_loss"]
-    global_results.update({f'latent_kl_{i}': v for i, v in enumerate(val_global_varprior_losses)})
 
     log = logger.info if logger is not None else print
     log(

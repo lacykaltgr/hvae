@@ -62,7 +62,6 @@ def get_kl_loss():
 
 
 
-
 class LogProb(nn.Module):
 
     """

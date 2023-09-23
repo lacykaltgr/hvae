@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from src.hparams import get_hparams
 
+
 """
 -------------------
 MODEL UTILS
@@ -168,7 +169,9 @@ def get_save_load_paths(mode='train'):
     elif mode == 'analysis':
         load_from = p.load_from_analysis
         assert load_from is not None
-        save_folder = os.path.join(p.dir, p.name)
+        date = load_from.split('/')[0] \
+            if load_from.split('/')[0] != "migration" else ""
+        save_folder = os.path.join(p.dir, p.name, date)
         load_from_file = os.path.join(save_folder, load_from)
         save_dir = os.path.join(save_folder, "analysis")
         os.makedirs(save_dir, exist_ok=True)
@@ -270,7 +273,7 @@ def prepare_for_log(results: dict):
         results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
         p = get_hparams().eval_params
         results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
-                                            for v in results["avg_var_prior_losses"]])
+                                             for v in results["avg_var_prior_losses"]])
         results.update({f'latent_kl_{i}': v.detach().cpu().item() for i, v in enumerate(results["avg_var_prior_losses"])})
         results.pop("avg_var_prior_losses")
     return results

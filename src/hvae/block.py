@@ -297,10 +297,10 @@ class GenBlock(SimpleGenBlock):
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample() if not use_mean else posterior.mean
+        z = posterior.rsample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample() if not use_mean else prior.mean
+            z_prior = prior.rsample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (prior, posterior)
@@ -411,10 +411,10 @@ class TopGenBlock(GenBlock):
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample() if not use_mean else posterior.mean
+        z = posterior.rsample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample() if not use_mean else prior.mean
+            z_prior = prior.rsample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         return z, (prior, posterior)
@@ -492,10 +492,10 @@ class ResidualGenBlock(GenBlock):
         y_posterior = self.posterior_layer(y_posterior)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
-        z = posterior.sample() if not use_mean else posterior.mean
+        z = posterior.rsample() if not use_mean else posterior.mean
 
         if variate_mask is not None:
-            z_prior = prior.sample() if not use_mean else prior.mean
+            z_prior = prior.rsample() if not use_mean else prior.mean
             z = self.prune(z, z_prior, variate_mask)
 
         y = y + kl_residual

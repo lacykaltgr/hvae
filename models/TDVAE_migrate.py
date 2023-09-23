@@ -48,16 +48,6 @@ def _model(migration):
     return __model
 
 
-def texture_decodability(n_input_dims, n_classes):
-    return Hyperparams(
-        type='mlp',
-        input_size=n_input_dims,
-        hidden_sizes=[],
-        output_size=n_classes,
-        activation=torch.nn.Softmax,
-        residual=False,
-        activate_output=True
-    )
 
 
 # --------------------------------------------------
@@ -73,10 +63,11 @@ MIGRATION HYPERPARAMETERS
 from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent
 migration_params = Hyperparams(
     params=dict(
-        path="migration/TDVAE_migration/weights_TDVAE40125/eval_TDVAE40125/mycurl-17250000"
+        path="migration/TDVAE_migration/weights_TDVAE40/eval_TDVAE40/mycurl-33750000"
     ),
     migration_agent=TDVAEMigrationAgent
 )
+
 
 """
 --------------------
@@ -85,7 +76,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE40n_migrate',
+    name='TDVAE40_migrate',
 
     # TRAIN LOG
     # --------------------
@@ -96,13 +87,15 @@ log_params = Hyperparams(
     load_from_train=None,
     dir_naming_scheme='timestamp',
 
+
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-19__21-11/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-09-23__16-22/migrated_checkpoint.pth',
+
 
     # SYNTHESIS
     # --------------------
-    load_from_analysis='migration/2023-09-19__21-11/migrated_checkpoint.pth',
+    load_from_analysis='migration/2023-09-23__16-22/migrated_checkpoint.pth',
 )
 
 """
@@ -124,7 +117,7 @@ model_params = Hyperparams(
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
-    gradient_smoothing_beta=1,  # 0.6931472,
+    gradient_smoothing_beta=0.6931472,
 
     # Num of mixtures in the MoL layer
     num_output_mixtures=3,
@@ -139,17 +132,11 @@ DATA HYPERPARAMETERS
 --------------------
 """
 from data.textures.textures import TexturesDataset
-
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
     dataset=TexturesDataset,
     params=dict(type="natural", image_size=40, whitening="old"),
-
-    # Data paths. Not used for (mnist, cifar-10)
-    train_data_path='../datasets/imagenet_32/train_data/',
-    val_data_path='../datasets/imagenet_32/val_data/',
-    synthesis_data_path='../datasets/imagenet_32/val_data/',
 
     # Image metadata
     shape=(1, 40, 40),
@@ -210,6 +197,7 @@ optimizer_params = Hyperparams(
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
 
+
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
     clip_gradient_norm=False,
@@ -268,7 +256,7 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    n_samples_for_validation=10000,
+    n_samples_for_validation=5000,
     # validation batch size
     batch_size=128,
 
@@ -276,20 +264,19 @@ eval_params = Hyperparams(
 
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4,
+    latent_active_threshold=1e-4
 )
 
 """
 --------------------
-ANALYSIS HYPERPARAMETERS
+SYNTHESIS HYPERPARAMETERS
 --------------------
 """
-
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability',
-    # 'mei', 'gabor', 'latent_step_analysis', 'white_noise_analysis')
-    ops=['white_noise_analysis'],
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei', 'gabor'
+    ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
@@ -325,10 +312,10 @@ analysis_params = Hyperparams(
     # --------------------
     white_noise_analysis=Hyperparams(
         queries=dict(
-            y=dict(
-                n_samples=1000000,
+            z=dict(
+                n_samples=1000,
                 sigma=1.,
-                n_cols=25,
+                n_cols=10,
             )
         )
     ),
@@ -337,30 +324,11 @@ analysis_params = Hyperparams(
     # --------------------
     mei=Hyperparams(
         queries=dict(
-            z=dict(
-                neuron_query=0,
-                iter_n=1000,  # number of iterations
-                start_sigma=1.5,
-                end_sigma=0.01,
-                start_step_size=3.0,
-                end_step_size=0.125,
-                precond=0,  # strength of gradient preconditioning filter falloff
-                step_gain=0.1,  # scaling of gradient steps
-                jitter=0,  # size of translational jittering
-                blur=True,
-                norm=-1,  # norm adjustment after step, negative to turn off
-                train_norm=-1,  # norm adjustment during step, negative to turn off
-                clip=True  # Whether to clip the range of the image to be in valid range
-            ),
-            y=dict(),
-
         )
 
     ),
     gabor=Hyperparams(
         queries=dict(
-            z=0,
-            y=1,
         )
     ),
 
@@ -378,7 +346,7 @@ analysis_params = Hyperparams(
     # --------------------
 
     decodability=Hyperparams(
-        model=texture_decodability,
+        model=None,
         optimizer='Adam',
         loss="bce",
         epcohs=100,
@@ -412,7 +380,6 @@ BLOCK HYPERPARAMETERS
 --------------------
 """
 import torch
-
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -422,7 +389,8 @@ mlp_params = Hyperparams(
     hidden_sizes=[],
     output_size=1000,
     activation=torch.nn.ReLU(),
-    residual=False
+    residual=False,
+    activate_output=True
 )
 
 cnn_params = Hyperparams(
@@ -453,6 +421,7 @@ unpool_params = Hyperparams(
     filters=3,
     strides=2,
 )
+
 
 """
 --------------------
