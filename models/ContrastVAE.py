@@ -1,42 +1,26 @@
 from collections import OrderedDict
-import torch
 
 
-def _model(migration):
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+def _model():
+    from src.hvae.block import InputBlock, ContrastiveOutputBlock, TopGenBlock, SimpleGenBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten, FixedStdDev
+    from src.elements.layers import Flatten, FixedStdDev, RandomScaler, Unflatten
 
     _blocks = OrderedDict(
         x=InputBlock(
-            net=Flatten(start_dim=1),  # 0: batch-flatten, 1: sample-flatten
+            net=[Flatten(start_dim=1), RandomScaler()],  #0: batch-flatten, 1: sample-flatten
         ),
-        hiddens=SimpleBlock(
-            net=migration.get_net("mlp_shared_encoder", activate_output=True),
-            input_id="x"
-        ),
-        y=TopGenBlock(
-            net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(500,),
+        z=TopGenBlock(
+            net=x_to_z_net,
             prior_trainable=False,
-            concat_posterior=False,
-            condition="hiddens",
-            output_distribution="laplace"
+            prior_data=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1),
+            condition="x",
+            output_distribution="normal"
         ),
-        z=GenBlock(
-            prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
-            posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
-            input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
-            input_id="y",
-            condition="hiddens",
-            output_distribution="normal",
-            concat_posterior=True,
-        ),
-        x_hat=OutputBlock(
-            net=[migration.get_net("mlp_data_decoder", activate_output=False),
-                 Unflatten(1, data_params.shape),
-                 FixedStdDev(0.4)],
+        x_hat=ContrastiveOutputBlock(
             input_id="z",
+            contrast_dims=1,
+            net=[z_to_x_net, FixedStdDev(0.4), Unflatten(1, (2, *data_params.shape[1:]))],
             output_distribution="normal"
         ),
     )
@@ -47,26 +31,53 @@ def _model(migration):
 
     return __model
 
+import torch
+def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
+    from src.elements.losses import get_kl_loss
+    kl_divergence = get_kl_loss()
 
+    beta1 = 1
+    beta2 = 1
+
+    q_z1_x =    distributions['hiddens'][0]
+    z1_sample = q_z1_x.sample()
+    p_z2_z1 =   distributions['y'][0]
+    q_z2_z1 =   distributions['y'][1]
+    p_z1_z2 =   distributions['z'][0]
+    p_x_z1 =    distributions['output'][0]
+
+    nll = torch.mean(-p_x_z1.log_prob(targets))
+
+    avg_var_prior_losses = []
+
+    reg1 = torch.mean(-q_z1_x.entropy())
+    reg1 += torch.mean(-p_z1_z2.log_prob(z1_sample))
+    reg1 *= beta1
+
+    avg_var_prior_losses.append(reg1)
+
+    kl2, avg_kl2 = kl_divergence(q_z2_z1, p_z2_z1)
+    kl2 = torch.mean(kl2)
+    kl2 *= beta2
+
+    avg_var_prior_losses.append(avg_kl2)
+
+    kl_div = reg1 + kl2
+    elbo = nll + kl_div
+
+    return dict(
+        elbo=elbo,
+        reconstruction_loss=nll,
+        avg_reconstruction_loss=nll,
+        kl_div=kl_div,
+        avg_var_prior_losses=avg_var_prior_losses,
+    )
 
 
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
 from src.hparams import Hyperparams
-
-"""
---------------------
-MIGRATION HYPERPARAMETERS
---------------------
-"""
-from migration.TDVAE_migration.migration_agent import TDVAEMigrationAgent
-migration_params = Hyperparams(
-    params=dict(
-        path="migration/TDVAE_migration/weights_TDVAE40/eval_TDVAE40/mycurl-33750000"
-    ),
-    migration_agent=TDVAEMigrationAgent
-)
 
 
 """
@@ -76,7 +87,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE40_migrate',
+    name='ContrastVAE',
 
     # TRAIN LOG
     # --------------------
@@ -90,12 +101,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-23__16-22/migrated_checkpoint.pth',
+    load_from_eval='path_to_directory/checkpoint.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_analysis='migration/2023-09-23__16-22/migrated_checkpoint.pth',
+    load_from_analysis='path_to_directory/checkpoint.pth',
 )
 
 """
@@ -106,7 +117,7 @@ MODEL HYPERPARAMETERS
 
 model_params = Hyperparams(
     model=_model,
-    device='mps',
+    device='cpu',
     seed=420,
 
     # Latent layer distribution base can be in ('std', 'logstd').
@@ -276,7 +287,7 @@ analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
     # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
     # in development: 'mei', 'gabor'
-    ops=['white_noise_analysis'],
+    ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
@@ -312,10 +323,10 @@ analysis_params = Hyperparams(
     # --------------------
     white_noise_analysis=Hyperparams(
         queries=dict(
-            y=dict(
-                n_samples=500_000,
+            z=dict(
+                n_samples=1000,
                 sigma=1.,
-                n_cols=100,
+                n_cols=10,
             )
         )
     ),
@@ -429,3 +440,27 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
+x_size = 1600
+z_size = 250
+
+x_to_z_net = Hyperparams(
+    type='mlp',
+    input_size=x_size,
+    hidden_sizes=[2000, 1000, 500],
+    output_size=2*z_size,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=False,
+)
+
+z_to_x_net = Hyperparams(
+    type='mlp',
+    input_size=z_size-1,
+    hidden_sizes=[],
+    output_size=x_size,
+    activation=None,
+    residual=False,
+    activate_output=False,
+)
+
+

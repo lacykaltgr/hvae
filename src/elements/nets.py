@@ -47,7 +47,6 @@ def get_net(model) -> Sequential:
     elif isinstance(model, BlockNet):
         return Sequential(model)
 
-
     # Load model from SerializableModule
     elif isinstance(model, SerializableModule):
         return Sequential(model)
@@ -56,7 +55,6 @@ def get_net(model) -> Sequential:
     # Load model from SerializableSequential
     elif isinstance(model, Sequential):
         return model
-
 
     # Load model from list of any of the above
     elif isinstance(model, list):

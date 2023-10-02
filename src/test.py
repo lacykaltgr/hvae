@@ -8,6 +8,7 @@ from src.hvae.model import evaluate
 def main():
     p = get_hparams()
     checkpoint, checkpoint_path = load_experiment_for('test')
+    device = p.model_params.device
 
     assert checkpoint is not None
     model = checkpoint.get_model()
@@ -15,7 +16,7 @@ def main():
 
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
-    model = model.to(p.model_params.device)
+    model = model.to(device)
 
     dataset = p.data_params.dataset(**p.data_params.params)
     val_loader = dataset.get_val_loader()

@@ -140,9 +140,9 @@ def white_noise_analysis(model, target_block, save_path, shape, n_samples=100, s
     white_noise = np.random.normal(size=(n_samples, np.prod(shape)), loc=0.0, scale=1.).astype(np.float32)
 
     # apply ndimage.gaussian_filter with sigma=0.6
-    for i in range(n_samples):
-        white_noise[i, :] = scipy.ndimage.gaussian_filter(
-            white_noise[i, :].reshape(shape), sigma=sigma).reshape(np.prod(shape))
+    #for i in range(n_samples):
+    #    white_noise[i, :] = scipy.ndimage.gaussian_filter(
+    #        white_noise[i, :].reshape(shape), sigma=sigma).reshape(np.prod(shape))
 
     compute_target_block = model.compute_function(target_block)
     target_computed, _ = compute_target_block(torch.zeros((1, *shape)))

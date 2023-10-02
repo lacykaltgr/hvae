@@ -12,6 +12,7 @@ def main():
     p = get_hparams()
     checkpoint, checkpoint_path = load_experiment_for('train')
     logger = setup_logger(checkpoint_path)
+    device = p.model_params.device
 
     if checkpoint is not None:
         gloabal_step = checkpoint.global_step
@@ -26,7 +27,7 @@ def main():
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     logger.info(f'Train step generator trainable params '
                 f'{np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000:.3f}m.')
-    model = model.to(p.model_params.device)
+    model = model.to(device)
 
     optimizer = get_optimizer(model=model,
                               type=p.optimizer_params.type,
