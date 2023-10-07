@@ -321,7 +321,6 @@ class GenBlock(SimpleGenBlock):
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
-        print("prior", pm.device, pm.shape)
         prior = generate_distribution(pm, pv, self.output_distribution)
         if self.input_transform is not None:
             y = self.input_transform(y)
@@ -330,7 +329,6 @@ class GenBlock(SimpleGenBlock):
         posterior_input = torch.cat([cond, y], dim=1) if self.concat_posterior else cond
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
-        print("posterior", qm.device, qm.shape)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.rsample() if not use_mean else posterior.mean
 
