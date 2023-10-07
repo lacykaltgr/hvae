@@ -18,6 +18,7 @@ class _Block(SerializableModule):
     """
     Base class for all blocks
     """
+
     def __init__(self, input_id: str or List[str] = None):
         super(_Block, self).__init__()
         self.input = input_id
@@ -50,6 +51,7 @@ class SimpleBlock(_Block):
     Simple block that takes an input and returns an output
     No sampling is performed
     """
+
     def __init__(self, net, input_id: str):
         super(SimpleBlock, self).__init__(input_id)
         self.net: Sequential = get_net(net)
@@ -77,6 +79,7 @@ class ConcatBlock(_Block):
     """
     Concatenates two inputs along a given dimension
     """
+
     def __init__(self, inputs: List[str], dimension: int = 1):
         if len(inputs) != 2:
             raise ValueError("ConcatBlock only supports two inputs")
@@ -110,6 +113,7 @@ class DualInputBlock(_Block):
     """
     Takes 2 inputs
     """
+
     def __init__(self, inputs: List[str], net):
         super().__init__(None)
         assert len(inputs) == 2
@@ -144,14 +148,15 @@ class InputBlock(SimpleBlock):
     Block that takes an input
     and runs it through a preprocessing net if one is given
     """
+
     def __init__(self, net=None):
         super(InputBlock, self).__init__(net, "input")
 
     def forward(self, inputs: tensor, **kwargs) -> dict:
         computed = {self.output: inputs} \
-                    if self.net is None else \
-                    {self.input: inputs,
-                     self.output: self.net(inputs)}
+            if self.net is None else \
+            {self.input: inputs,
+             self.output: self.net(inputs)}
         return computed
 
     @staticmethod
@@ -165,6 +170,7 @@ class TopSimpleBlock(SimpleBlock):
     Top block of the model
     Constant or trainable prior
     """
+
     def __init__(self, net,
                  prior_shape: tuple,
                  prior_trainable: bool,
@@ -287,7 +293,6 @@ class ContrastiveOutputBlock(OutputBlock):
         return z, (prior, None)
 
 
-
 class GenBlock(SimpleGenBlock):
     """
     Takes an input,
@@ -316,6 +321,7 @@ class GenBlock(SimpleGenBlock):
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
+        print("prior", pm.device, pm.shape)
         prior = generate_distribution(pm, pv, self.output_distribution)
         if self.input_transform is not None:
             y = self.input_transform(y)
@@ -324,6 +330,7 @@ class GenBlock(SimpleGenBlock):
         posterior_input = torch.cat([cond, y], dim=1) if self.concat_posterior else cond
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
+        print("posterior", qm.device, qm.shape)
         posterior = generate_distribution(qm, qv, self.output_distribution)
         z = posterior.rsample() if not use_mean else posterior.mean
 
@@ -405,13 +412,14 @@ class TopGenBlock(GenBlock):
     Constant or trainable prior
     Posterior is conditioned on the condition
     """
+
     def __init__(self, net,
                  prior_trainable: bool,
                  condition: str,
                  output_distribution: str = 'normal',
                  concat_posterior: bool = False,
                  prior_data=None,
-                 prior_shape: tuple= None):
+                 prior_shape: tuple = None):
         super(TopGenBlock, self).__init__(prior_net=None, posterior_net=net,
                                           input_id='trainable_h', condition=condition,
                                           output_distribution=output_distribution,
@@ -427,14 +435,18 @@ class TopGenBlock(GenBlock):
             nn.init.kaiming_uniform_(self.trainable_h, nonlinearity='linear')
         else:
             # constant tensor with 0 values
-            self.trainable_h = torch.nn.Parameter(data=torch.zeros(size=prior_shape), requires_grad=False) \
+            self.trainable_h = torch.nn.Parameter(data=torch.concat(
+                [
+                    torch.zeros(size=prior_shape),
+                    torch.ones(size=prior_shape)
+                ], 0),
+                requires_grad=False) \
                 if prior_data is None else prior_data
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
-
         posterior_input = torch.cat([cond, y], dim=1) if self.concat_posterior else cond
         y_posterior = self.posterior_net(posterior_input)
         qm, qv = split_mu_sigma(y_posterior)
@@ -451,7 +463,7 @@ class TopGenBlock(GenBlock):
         if self.condition not in computed.keys():
             raise ValueError(f"Condition {self.condition} not found in computed")
         cond = computed[self.condition]
-        x = torch.tile(self.trainable_h, (cond.shape[0], 1))
+        x = torch.tile(self.trainable_h, (cond.shape[0], 1)).to(cond.device)
         if cond.shape != x.shape and self.concat_posterior:
             x = x.resize(cond.shape)
         z, distributions = self._sample(x, cond, use_mean=use_mean)
@@ -492,6 +504,7 @@ class ResidualGenBlock(GenBlock):
     """
     Architecture from VDVAE paper
     """
+
     def __init__(self, net,
                  prior_net,
                  posterior_net,
@@ -516,7 +529,7 @@ class ResidualGenBlock(GenBlock):
         pm, pv = split_mu_sigma(y_prior)
         prior = generate_distribution(pm, pv, self.output_distribution)
 
-        y_posterior = self.posterior_net(torch.cat([y, cond], dim=1)) # y, cond fordított sorrendben mint máshol
+        y_posterior = self.posterior_net(torch.cat([y, cond], dim=1))  # y, cond fordított sorrendben mint máshol
         y_posterior = self.posterior_layer(y_posterior)
         qm, qv = split_mu_sigma(y_posterior)
         posterior = generate_distribution(qm, qv, self.output_distribution)
@@ -544,7 +557,6 @@ class ResidualGenBlock(GenBlock):
     def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (dict, tuple):
         x = computed[self.input]
         cond = computed[self.condition]
-        print(self.input, x.shape, self.condition, cond.shape)
         z, y, distributions = self._sample(x, cond, variate_mask, use_mean)
         y = y + self.z_projection(z)
         y = self.net(y)

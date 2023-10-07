@@ -309,7 +309,7 @@ class SSIM(nn.Module):
             x = torch.unsqueeze(x, dim=1)
         elif len(shape) == 4:
             x = torch.reshape(x, shape=[-1] + shape[-3:])  # b , c , h , w
-        y = F.conv2d(x, weight=self.kernel, stride=1, padding=(self.filter_size - 1) // 2,
+        y = F.conv2d(x, weight=self.kernel.to(x.device), stride=1, padding=(self.filter_size - 1) // 2,
                      groups=x.shape[1])  # b, c, h, w
         return y
 

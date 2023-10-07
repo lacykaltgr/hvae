@@ -17,7 +17,7 @@ def _model(migration):
         ),
         y=TopGenBlock(
             net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(500,),
+            prior_shape=(1, 250),
             prior_trainable=False,
             concat_posterior=False,
             condition="hiddens",
