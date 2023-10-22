@@ -440,6 +440,7 @@ class TopGenBlock(GenBlock):
                 ], 0),
                 requires_grad=False) \
                 if prior_data is None else prior_data
+            print=self.trainable_h.shape
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)
