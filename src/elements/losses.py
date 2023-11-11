@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.distribution import Distribution
+from torch.distributions import Normal, Laplace
 
 from src.hparams import get_hparams
 from ..utils import scale_pixels
@@ -77,7 +78,7 @@ class LogProb(nn.Module):
 
     def forward(self, targets, distribution: Distribution, global_batch_size=32):
         targets = targets.reshape(distribution.batch_shape)
-        log_probs = distribution.log_prob(targets)
+        log_probs = distribution.log_prob(targets + 1e-8)
         log_p_x = torch.flatten(log_probs, start_dim=1)
         mean_axis = list(range(1, len(log_p_x.size())))
 
@@ -91,7 +92,7 @@ class LogProb(nn.Module):
             np.prod([log_p_x.size()[i] for i in mean_axis]))  # B
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
-
+        
         return loss, avg_loss
 
 
@@ -246,7 +247,12 @@ class KLDivergence(nn.Module):
         self.data_shape = data_shape
 
     def forward(self, prior: Distribution, posterior: Distribution, global_batch_size=32):
-        loss = self.calculate_std_loss(prior.mean, posterior.mean, prior.stddev, prior.stddev)
+        if isinstance(prior, Normal):
+            loss = self.calculate_normal_loss(posterior.mean, prior.mean, posterior.stddev, prior.stddev)
+        elif isinstance(prior, Laplace):
+            loss = self.calculate_lap_loss(posterior.mean, prior.mean, posterior.stddev, prior.stddev)
+        else:
+            raise ValueError("KL Divergence loss is only implemented for Normal and Laplace distributions")
 
         mean_axis = list(range(1, len(loss.size())))
         per_example_loss = torch.sum(loss, dim=mean_axis)
@@ -259,16 +265,27 @@ class KLDivergence(nn.Module):
         loss = torch.sum(per_example_loss) / scalar
         # divide by ln(2) to convert to KL rate (average space bits/dim)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
+        
         return loss, avg_loss
 
     @staticmethod
     @torch.jit.script
-    def calculate_std_loss(p_mu, q_mu, p_sigma, q_sigma):
-        term1 = (p_mu - q_mu) / q_sigma
-        term2 = p_sigma / q_sigma
-        loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2)
-        loss = torch.nan_to_num(loss, nan=0.0)
+    def calculate_normal_loss(p_mu, q_mu, p_sigma, q_sigma):
+        e = torch.tensor(1e-10) # epsilon to avoid division by zero
+        term1 = (p_mu - q_mu) / (q_sigma + e)
+        term2 = p_sigma / (q_sigma + e)
+        loss = 0.5 * (term1 * term1 + term2 * term2) - 0.5 - torch.log(term2 + e)
         return loss
+    
+    @staticmethod
+    @torch.jit.script
+    def calculate_lap_loss(p_mu, q_mu, p_b, q_b):
+        e = torch.tensor(1e-10) # epsilon to avoid division by zero
+        term1 = torch.log(q_b / (p_b + e) + e)
+        term2 = (p_b * p_b + (p_mu - q_mu) * (p_mu - q_mu)) / (2 * q_b * q_b + e)
+        loss = term1 + term2 - 0.5
+        return loss
+
 
 
 class SSIM(nn.Module):

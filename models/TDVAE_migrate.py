@@ -17,11 +17,11 @@ def _model(migration):
         ),
         y=TopGenBlock(
             net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(1, 250),
+            prior_shape=(250, ),
             prior_trainable=False,
             concat_posterior=False,
             condition="hiddens",
-            output_distribution="laplace"
+            output_distribution="normal"
         ),
         z=GenBlock(
             prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
@@ -29,7 +29,7 @@ def _model(migration):
             input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
             input_id="y",
             condition="hiddens",
-            output_distribution="normal",
+            output_distribution="laplace",
             concat_posterior=True,
         ),
         x_hat=OutputBlock(
@@ -90,12 +90,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-09-23__16-22/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-10-17__11-45/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_analysis='migration/2023-09-23__16-22/migrated_checkpoint.pth',
+    load_from_analysis='migration/2023-10-17__11-45/migrated_checkpoint.pth',
 )
 
 """
@@ -106,7 +106,7 @@ MODEL HYPERPARAMETERS
 
 model_params = Hyperparams(
     model=_model,
-    device='mps',
+    device='cuda',
     seed=420,
 
     # Latent layer distribution base can be in ('std', 'logstd').
@@ -256,11 +256,11 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    n_samples_for_validation=5000,
+    n_samples_for_validation=64000,
     # validation batch size
     batch_size=128,
 
-    use_mean=True,
+    use_mean=False,
 
     # Threshold used to mark latent groups as "active".
     # Purely for debugging, shouldn't be taken seriously.
