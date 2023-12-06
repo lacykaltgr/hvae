@@ -16,16 +16,16 @@ class TexturesDataset(_DataSet):
         self.whitening = whitening
         super(TexturesDataset, self).__init__(with_labels=with_labels)
 
-    def load(self, with_labels=False):
+    def load(self):
         dataset_dir = os.path.join(root, 'data/textures/datasets/')
         os.makedirs(dataset_dir, exist_ok=True)
         if not len(os.listdir(dataset_dir)) == 4:
             run_download_script()
 
         if self.type == "natural":
-            dataset = load_natural_ds(image_size=self.image_size, with_labels=with_labels)
+            dataset = load_natural_ds(image_size=self.image_size, with_labels=self.with_labels)
         elif self.type == "texture":
-            dataset = load_texture_ds(image_size=self.image_size, whitening=self.whitening, with_labels=with_labels)
+            dataset = load_texture_ds(image_size=self.image_size, whitening=self.whitening, with_labels=self.with_labels)
         else:
             raise ValueError("Invalid type")
     
@@ -89,7 +89,7 @@ def load_texture_ds(image_size=20, whitening="new", with_labels=True):
         if whitening == "old":
             path = os.path.join(root, "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl")
         elif whitening == "new":
-            path = os.path.joind(root, "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl")#"/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_naturalPCA_640000_40px.pkl"
+            path = os.path.join(root, "data/textures/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_640000_40px.pkl")#"/datasets/labeled_texture_oatleathersoilcarpetbubbles_commonfiltered_naturalPCA_640000_40px.pkl"
         else:
             raise TypeError
     elif image_size == 50:

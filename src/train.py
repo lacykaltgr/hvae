@@ -48,8 +48,8 @@ def main():
                             checkpoint=checkpoint)
 
     dataset = p.data_params.dataset(**p.data_params.params)
-    train_loader = dataset.get_train_loader()
-    val_loader = dataset.get_val_loader()
+    train_loader = dataset.get_train_loader(p.train_params.batch_size)
+    val_loader = dataset.get_val_loader(p.eval_params.batch_size)
 
     writer_train = create_tb_writer_for('train', checkpoint_path=checkpoint_path)
     writer_val = create_tb_writer_for('val', checkpoint_path=checkpoint_path)

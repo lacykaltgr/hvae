@@ -1,18 +1,16 @@
 version: '3'
 services:
   jupyter-service:
-    image: python
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../
+      dockerfile: config_docker/Dockerfile
     ports:
-      - "8880:8888"
-      - "6000:6006"
+      - "8880:8888"  # jupyter
+      - "6000:6006"  # tensorboard
     shm_size: 1g
     ulimits:
       memlock: -1
       stack: 67108864
     volumes:
-      - /Users/laszlofreund/:/mnt
-    entrypoint: ./start_jupyter.sh
+      - ./mnt/:/mnt
     tty: true # for interactive bash

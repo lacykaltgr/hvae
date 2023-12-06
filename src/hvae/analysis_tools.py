@@ -370,3 +370,5 @@ def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
                 break
     per_dim_divs /= (step + 1)
     return per_dim_divs
+
+

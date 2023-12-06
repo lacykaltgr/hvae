@@ -31,7 +31,6 @@ def get_net(model) -> Sequential:
         else:
             raise NotImplementedError("Model type not supported.")
 
-
     # Load model from hyperparameter config
     elif isinstance(model, Hyperparams):
 
@@ -50,7 +49,6 @@ def get_net(model) -> Sequential:
     # Load model from SerializableModule
     elif isinstance(model, SerializableModule):
         return Sequential(model)
-
 
     # Load model from SerializableSequential
     elif isinstance(model, Sequential):

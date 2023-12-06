@@ -1,13 +1,8 @@
-FROM python
+FROM nvcr.io/nvidia/pytorch:23.11-py3
 
 WORKDIR /app
+COPY . /app/
 
-#RUN pip install --trusted-host pypi.python.org -r requirements.txt
-
-COPY entrypoint.sh app/
-COPY start_jupyter.sh app/
-
-RUN chmod +x /entrypoint.sh
-RUN chmod +x /start_jupyter.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+RUN pip install --trusted-host pypi.python.org -r requirements.txt
+RUN chmod +x config_docker/start_jupyter.sh
+CMD ["config_docker/start_jupyter.sh"]

@@ -110,12 +110,12 @@ def main():
     dataset = p.data_params.dataset(**p.data_params.params)
     for operation in p.analysis_params.ops:
         if operation == 'reconstruction':
-            dataloader = dataset.get_test_loader()
+            dataloader = dataset.get_test_loader(p.eval_params.batch_size)
             reconstruction_mode(model, dataloader, save_path, logger)
         elif operation == 'generation':
             generation_mode(model, save_path, logger)
         elif operation == 'div_stats':
-            dataloader = dataset.get_val_loader()
+            dataloader = dataset.get_val_loader(p.eval_params.batch_size)
             divergence_stats_mode(model, dataloader, save_path, logger)
         elif operation == 'decodability':
             decodability_mode(model, dataset, save_path, logger)
@@ -126,7 +126,7 @@ def main():
         elif operation == 'white_noise_analysis':
             white_noise_analysis_mode(model, save_path, logger)
         elif operation == 'latent_step':
-            dataloader = dataset.get_val_loader()
+            dataloader = dataset.get_val_loader(p.eval_params.batch_size)
             latent_step_analysis_mode(model, dataloader, save_path, logger)
         else:
             logger.error(f'Unknown Mode {operation}')

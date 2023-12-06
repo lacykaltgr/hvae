@@ -19,9 +19,9 @@ def main():
     model = model.to(device)
 
     dataset = p.data_params.dataset(**p.data_params.params)
-    val_loader = dataset.get_val_loader()
+    test_loader = dataset.get_test_loader(p.eval_params.batch_size)
 
-    evaluate(model, val_loader,
+    evaluate(model, test_loader,
              use_mean=p.eval_params.use_mean,
              global_step=None,
              logger=None)
