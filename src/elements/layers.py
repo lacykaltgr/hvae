@@ -131,6 +131,26 @@ class FixedStdDev(SerializableModule):
         return FixedStdDev(**serialized["params"])
 
 
+class Slice(SerializableModule):
+    def __init__(self, slice):
+        super(Slice, self).__init__()
+        self.slice = slice
+
+    def forward(self, x):
+        return x[:, self.slice]
+
+    def serialize(self):
+        serialized = super().serialize()
+        serialized["params"] = dict(
+            slice=self.slice
+        )
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return FixedStdDev(**serialized["params"])
+
+
 class KeepShapeWithValue(SerializableModule):
     def __init__(self, value):
         super(KeepShapeWithValue, self).__init__()

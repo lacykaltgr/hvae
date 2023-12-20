@@ -171,8 +171,7 @@ class ConvNet(SerializableModule):
                 strides=pool_strides,
             ))
 
-        convs += [activation,
-                  nn.Conv2d(in_channels=in_filters,
+        convs += [nn.Conv2d(in_channels=in_filters,
                             out_channels=bottlneck_filters,
                             kernel_size=(1, 1) if use_1x1 else kernel_size,
                             stride=(1, 1),

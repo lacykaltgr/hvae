@@ -355,6 +355,33 @@ class SerializableModule(Module):
         return serialized["type"]
 
 
+class SharedSerializableSequential(SerializableSequential):
+        def __init__(self, id):
+            super().__init__()
+            # generate random id
+            if id is None:
+                self.id = np.random.randint(0, 1000000)
+            else:
+                self.id = id
+
+        def serialize(self):
+            return dict(type=self.__class__, params=dict(id=self.id))
+
+        @staticmethod
+        def deserialize(serialized):
+            return serialized["type"](serialized["params"]["id"])
+
+
+def handle_shared_modules(module, shared_modules):
+    for module in module.children():
+        if isinstance(module, SharedSerializableSequential):
+            if module.id not in shared_modules.keys():
+                shared_modules[module.id] = module
+            else:
+                module = shared_modules.pop(module.id)
+    return module, shared_modules
+
+
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):

@@ -5,6 +5,7 @@ from torch import nn
 from torch import tensor
 from collections import OrderedDict
 from src.utils import OrderedModuleDict
+from src.utils import handle_shared_modules
 
 from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleGenBlock, TopGenBlock
 from src.hvae.model import train, reconstruct, generate, evaluate
@@ -228,8 +229,11 @@ class hVAE(nn.Module):
     @staticmethod
     def deserialize(serialized_blocks):
         blocks = OrderedDict()
+        shared = dict()
         for block in serialized_blocks:
-            blocks[block["output"]] = block["type"].deserialize(block)
+            deserialized = block["type"].deserialize(block)
+            deserialized, shared = handle_shared_modules(deserialized, shared)
+            blocks[block["output"]] = deserialized
         return hVAE(blocks)
 
     @staticmethod

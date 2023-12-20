@@ -417,8 +417,9 @@ class TopGenBlock(GenBlock):
                  output_distribution: str = 'normal',
                  concat_posterior: bool = False,
                  prior_data=None,
+                 prior_net=None,
                  prior_shape: tuple = None):
-        super(TopGenBlock, self).__init__(prior_net=None, posterior_net=net,
+        super(TopGenBlock, self).__init__(prior_net=prior_net, posterior_net=net,
                                           input_id='trainable_h', condition=condition,
                                           output_distribution=output_distribution,
                                           concat_posterior=concat_posterior)
@@ -440,7 +441,6 @@ class TopGenBlock(GenBlock):
                 ], 0),
                 requires_grad=False) \
                 if prior_data is None else prior_data
-            print=self.trainable_h.shape
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
         y_prior = self.prior_net(y)

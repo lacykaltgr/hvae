@@ -52,6 +52,7 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
         loss, avg_loss = kl_divergence(prior, posterior)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
+
     global_variational_prior_losses = torch.stack(global_variational_prior_losses)
     global_variational_prior_loss = torch.sum(global_variational_prior_losses) \
         if not prms.loss_params.use_gamma_schedule \
