@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 
 def _model(migration):
-    from src.hvae.block import InputBlock, OutputBlock, TopSimpleBlock, SimpleBlock, ResidualGenBlock
+    from src.hvae.block import InputBlock, OutputBlock, SimpleBlock, ResidualGenBlock
     from src.hvae.hvae import hVAE as hvae
 
     _blocks = OrderedDict()
@@ -42,25 +42,20 @@ def _model(migration):
                     )})
         level_up_count += 1
 
-    _blocks.update({'top': TopSimpleBlock(
-        net=None,
-        prior_shape=(500,),
-        prior_data=migration.trainable_h,
-        prior_trainable=True
-    )})
+    top = True
 
     level_down_count = 0
     for i, (levels_down, level_down_upsample) in enumerate(zip(migration.levels_down, migration.levels_down_upsample)):
         skip_input = f"level_up_{level_up_count-level_down_count-1}_skip"
 
         if migration.unpool_layers[level_down_count] is not None:
-            print(level_down_count)
             _blocks.update({
                 f'level_down_{level_down_count}_unpool':
                     SimpleBlock(
                         net=migration.unpool_layers[level_down_count],
-                        input_id=list(_blocks.keys())[-1]
+                        input_id=list(_blocks.keys())[-1] if not top else 'top'
                     )})
+            top = False
 
         _blocks.update({
             f'level_down_{level_down_count}':
@@ -71,10 +66,11 @@ def _model(migration):
                     z_projection=level_down_upsample["z_projection"],
                     prior_layer=level_down_upsample["prior_layer"],
                     posterior_layer=level_down_upsample["posterior_layer"],
-                    input=list(_blocks.keys())[-1],
+                    input_id=list(_blocks.keys())[-1] if not top else 'top',
                     condition=skip_input,
                     concat_posterior=True,
                 )})
+        top = False
 
         for level_n, level_down in enumerate(levels_down):
             _blocks.update({
@@ -86,7 +82,7 @@ def _model(migration):
                         z_projection=level_down["z_projection"],
                         prior_layer=level_down["prior_layer"],
                         posterior_layer=level_down["posterior_layer"],
-                        input=list(_blocks.keys())[-1],
+                        input_id=list(_blocks.keys())[-1],
                         condition=skip_input,
                         concat_posterior=True,
                     ),
@@ -102,8 +98,13 @@ def _model(migration):
             output_distribution='mol'
         )})
 
+    _prior = OrderedDict(
+        top=torch.nn.Parameter(migration.trainable_h, requires_grad=True)
+    )
+
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model
@@ -492,62 +493,4 @@ unpool_params = Hyperparams(
 CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
-# add your custom block hyperparameters here
-x_size = torch.prod(torch.tensor(data_params.shape))
-z_size = 1800
-hiddens_size = 2000
-y_size = 250
 
-x_to_hiddens_net = Hyperparams(
-    type='mlp',
-    input_size=x_size,
-    hidden_sizes=[],
-    output_size=hiddens_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-hiddens_to_y_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[1000, 500],
-    output_size=2 * y_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-y_to_concat_net = Hyperparams(
-    type='mlp',
-    input_size=y_size,
-    hidden_sizes=[500, 1000],
-    output_size=hiddens_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_prior_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[2000],
-    output_size=2 * z_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_posterior_net = Hyperparams(
-    type='mlp',
-    input_size=2 * hiddens_size,
-    hidden_sizes=[],
-    output_size=2 * z_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)
-
-z_to_x_net = Hyperparams(
-    type='mlp',
-    input_size=z_size,
-    hidden_sizes=[],
-    output_size=2 * x_size,
-    activation=torch.nn.ReLU(),
-    residual=False
-)

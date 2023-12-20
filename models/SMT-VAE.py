@@ -1,59 +1,87 @@
 from collections import OrderedDict
+from src.utils import SerializableModule
 
 
 def _model():
     from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten
+    from src.hvae.sequence import hSequenceVAE
+    from src.elements.layers import Conv2d, Slice, FixedStdDev
+    from src.utils import SharedSerializableSequential as Shared
+
+    shared_net = Shared(Conv2d(40, 4, 3, 1, 1))
 
     _blocks = OrderedDict(
-        x=InputBlock(
-            net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
-        ),
-        sparse=SimpleBlock(
-            net= "sparsify",
-            input_id="x"
-        ),
-        h=TopGenBlock(
-            net=hiddens_to_y_net,
-            prior_shape=(500, ),
-            prior_trainable=True,
-            concat_posterior=False,
-            condition="sparse",
-            output_distribution="normal"
-        ),
-        y_concat=SimpleBlock(
-            net=y_to_concat_net,
-            input_id="y",
-        ),
-        z=GenBlock(
-            prior_net=z_prior_net,
-            posterior_net=z_posterior_net,
-            input_transform=None,
-            input_id="y_concat",
-            condition="hiddens",
+        x=InputBlock(),
+            sparse_mu_sigma=SimpleBlock(
+                net=x_to_sparse,
+                input_id="x",
+            ),
+            h_manifold=SimpleBlock(
+                net=[Slice(40), shared_net],
+                input_id="sparse_mu_sigma",
+            ),
+        h=GenBlock(
+            prior_net=FixedStdDev(0.2),
+            posterior_net=ProductOfExperts(),
+            input_id="_h",
+            condition=[("h_manifold", "_h_manifold"), "substract", FixedStdDev(0.4)],
             output_distribution="normal",
-            concat_posterior=True,
+            fuse_prior="concat"
         ),
+
+        z=GenBlock(
+            prior_net=manifold_recon,
+            posterior_net=z_posterior,
+            input_id=[("_z_manifold", "h"), "add"],
+            condition="sparse_mu_sigma",
+            output_distribution="laplace",
+            fuse_prior="concat"
+        ),
+
+            z_manifold=SimpleBlock(
+                net=shared_net,
+                input_id="z",
+            ),
+
         x_hat=OutputBlock(
-            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
+            net=[z_to_x, FixedStdDev(0.4)],
             input_id="z",
             output_distribution="normal"
         ),
     )
 
-    __model = hvae(
+    _init = OrderedDict(
+        _h_manifold=torch.zeros(size=(1, 4, 10, 10)),
+        _h=torch.zeros(size=(1, 4, 10, 10)),
+        _z=torch.zeros(size=(1, 40, 10, 10)),
+        _z_manifold=torch.zeros(size=(1, 4, 10, 10)),
+    )
+
+    __model = hSequenceVAE(
         blocks=_blocks,
+        init=_init,
     )
 
     return __model
+
+
+class ProductOfExperts(SerializableModule):
+    def __init__(self):
+        super(ProductOfExperts, self).__init__()
+
+    def forward(self, x):
+        mu_0, sigma_0, mu_1, sigma_1 = x.chunk(4, dim=1)
+        MU_num = mu_0 * sigma_1 ** -2 + mu_1 * sigma_0 ** -2
+        MU_den = sigma_0 ** -2 + sigma_1 ** -2
+        MU = MU_num / MU_den
+        SIGMA = MU_den ** -1
+        return torch.cat([MU, SIGMA], dim=1)
 
 
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
 from src.hparams import Hyperparams
-
 
 """
 --------------------
@@ -62,7 +90,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='TDVAE',
+    name='SMT-VAE',
 
     # TRAIN LOG
     # --------------------
@@ -73,11 +101,9 @@ log_params = Hyperparams(
     load_from_train=None,
     dir_naming_scheme='timestamp',
 
-
     # EVAL
     # --------------------
     load_from_eval='path_to_directory/checkpoint.pth',
-
 
     # SYNTHESIS
     # --------------------
@@ -118,6 +144,7 @@ DATA HYPERPARAMETERS
 --------------------
 """
 from data.textures.textures import TexturesDataset
+
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
@@ -182,7 +209,6 @@ optimizer_params = Hyperparams(
     # exponential only
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
-
 
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
@@ -318,7 +344,6 @@ analysis_params = Hyperparams(
         )
     ),
 
-
     # Div_stats mode
     # --------------------
     div_stats=Hyperparams(
@@ -366,6 +391,7 @@ BLOCK HYPERPARAMETERS
 --------------------
 """
 import torch
+
 # These are the default parameters,
 # use this for reference when creating custom blocks.
 
@@ -408,74 +434,68 @@ unpool_params = Hyperparams(
     strides=2,
 )
 
-
 """
 --------------------
 CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_size = torch.prod(torch.tensor(data_params.shape))
-z_size = 1800
-hiddens_size = 2000
-y_size = 250
-
-x_to_hiddens_net = Hyperparams(
-    type='mlp',
-    input_size=x_size,
-    hidden_sizes=[],
-    output_size=hiddens_size,
+x_to_sparse = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=1,
+    bottleneck_ratio=40,
+    output_ratio=40,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-hiddens_to_y_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[1000, 500],
-    output_size=2*y_size,
+manifold_recon = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=4,
+    bottleneck_ratio=40,
+    output_ratio=40,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-y_to_concat_net = Hyperparams(
-    type='mlp',
-    input_size=y_size,
-    hidden_sizes=[500, 1000],
-    output_size=hiddens_size,
+z_posterior = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=80,
+    bottleneck_ratio=40,
+    output_ratio=80,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-z_prior_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[2000],
-    output_size=2*z_size,
-    activation=torch.nn.ReLU(),
+z_to_x = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=40,
+    bottleneck_ratio=20,
+    output_ratio=1,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
+    activation=None,
     residual=False,
-    activate_output=True,
-)
-
-z_posterior_net = Hyperparams(
-    type='mlp',
-    input_size=2*hiddens_size,
-    hidden_sizes=[],
-    output_size=2*z_size,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True,
-)
-
-z_to_x_net = Hyperparams(
-    type='mlp',
-    input_size=z_size,
-    hidden_sizes=[],
-    output_size=2*x_size,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True,
 )

@@ -4,6 +4,8 @@ from torch import tensor
 from torch import nn
 from collections import OrderedDict
 from src.utils import OrderedModuleDict
+from src.hvae.hvae import Generator, Encoder
+import torch
 
 
 class SequenceEncoder(nn.Module):
@@ -14,7 +16,6 @@ class SequenceEncoder(nn.Module):
     def forward(self, x: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
         _computed = x  # (batch_size, seq_len, c, h, w)
         # initialize states
-
         seq_len = x.shape[1]
         distributions = []
         for i in range(seq_len):
@@ -30,10 +31,9 @@ class SequenceEncoder(nn.Module):
         return computed, distributions
 
 
-class SequenceGenerator(nn.Module):
-    def __init__(self, blocks: OrderedModuleDict):
-        super(SequenceGenerator, self).__init__()
-        self.blocks: OrderedModuleDict = blocks
+class SequenceGenerator(Generator):
+    def __init__(self, blocks: OrderedModuleDict, init):
+        super(SequenceGenerator, self).__init__(blocks, prior=init)
 
     def forward(self, computed: dict, distributions: dict, variate_masks: list = None,
                 to_compute: str = None, use_mean: bool = False) -> (dict, dict):
@@ -60,10 +60,32 @@ class SequenceGenerator(nn.Module):
                 distributions[block.output] = dist
         return computed, distributions
 
+"""
+    def forward(self, computed: dict, variate_mask=None, use_mean=False, **kwargs) -> (tensor, dict, tuple):
+            cond = self.condition(computed)
+        x = torch.tile(self.trainable_h, (cond.shape[0], 1)).to(cond.device)
+        if cond.shape != x.shape and self.concat_posterior:
+            x = x.resize(cond.shape)
+        z, distributions = self._sample(x, cond, use_mean=use_mean)
+        computed[self.output] = z
+        return computed, distributions
+
+    def sample_from_prior(self, batch_size: int, t: int or float = None, use_mean=False, **kwargs) -> (dict, tuple):
+        y = torch.tile(self.trainable_h, (batch_size, 1))
+        z, dist = self._sample_uncond(y, t, use_mean=use_mean)
+        computed = {
+            self.input: y,
+            self.output: z}
+        return computed, dist
+        
+"""
+
 
 class hSequenceVAE(hVAE):
-    def __init__(self, blocks: OrderedDict):
-        super(hSequenceVAE, self).__init__(blocks)
+    def __init__(self, blocks: OrderedDict, init: dict = None):
+        super(hSequenceVAE, self).__init__(blocks, init=init,
+                                           encoder=SequenceEncoder,
+                                           generator=SequenceGenerator)
 
     def compute_function(self, block_name='output') -> callable:
         if block_name == 'output':

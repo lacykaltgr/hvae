@@ -314,7 +314,7 @@ class BlockNet(SerializableModule):
         Functions like a SimpleBlock
         Only for use in BlockNet
         """
-        def __init__(self, input_id: str):
+        def __init__(self, input_id):
             super(BlockNet.OutputBlock, self).__init__()
             self.input = input_id
 

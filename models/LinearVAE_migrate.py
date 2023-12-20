@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 
 def _model(migration):
-    from src.hvae.block import InputBlock, SimpleBlock, TopGenBlock, GenBlock, OutputBlock, ConcatBlock, DualInputBlock, SimpleGenBlock
+    from src.hvae.block import InputBlock, SimpleBlock, GenBlock, OutputBlock, SimpleGenBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.nets import BlockNet
     from src.elements.layers import Unflatten, Flatten, FixedStdDev, KeepShapeWithValue, EinsumLayer
@@ -15,23 +15,13 @@ def _model(migration):
             net=migration.get_net("mlp_shared_encoder", activate_output=True),
             input_id="x",
         ),
-        y=TopGenBlock(
-            net=[migration.get_net("mlp_cluster_encoder_final", activate_output=False),
-                 KeepShapeWithValue(1)],
-            prior_shape=(1, ),
-            prior_trainable=False,
-            prior_data=1,
+        y=GenBlock(
+            prior_net=None,
+            posterior_net=[migration.get_net("mlp_cluster_encoder_final", activate_output=False),
+                           KeepShapeWithValue(1)],
+            input_id="y_prior",
             condition="hiddens",
             output_distribution="onehot_categorical",
-            concat_posterior=False
-        ),
-        hiddens_to_z=SimpleBlock(
-            input_id="hiddens",
-            net=migration.get_net("mlp_latent_encoder_0", activate_output=False),
-        ),
-        z_condition=DualInputBlock(
-            inputs=["y", "hiddens_to_z"],
-            net=EinsumLayer(equation='ij,ik->ik'),
         ),
         z=GenBlock(
             prior_net=BlockNet(
@@ -44,18 +34,15 @@ def _model(migration):
                     input_id="y",
                     net=migration.get_net("latent_prior_sigma", activate_output=False),
                 ),
-                z_prior=ConcatBlock(
-                    inputs=["z_prior_mu", "z_prior_sigma"],
-                    dimension=1,
-                ),
                 output=BlockNet.OutputBlock(
-                    input_id="z_prior",
+                    input_id=(["z_prior_mu", "z_prior_sigma"], "concat"),
                 )
             ),
             posterior_net=None,
             input_id="y",
-            concat_posterior=False,
-            condition="z_condition",
+            condition=[("y",
+                        ["hiddens", migration.get_net("mlp_latent_encoder_0", activate_output=False)]),
+                       EinsumLayer(equation='ij,ik->ik')],
             output_distribution="laplace"
         ),
         x_hat=OutputBlock(
@@ -67,8 +54,13 @@ def _model(migration):
         ),
     )
 
+    _prior = OrderedDict(
+        y_prior=torch.tensor(1.)
+    )
+
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model

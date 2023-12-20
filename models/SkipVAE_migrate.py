@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 
 def _model(migration):
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock, ConcatBlock
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import FixedStdDev, Flatten, Unflatten
 
@@ -14,42 +14,42 @@ def _model(migration):
             net=migration.get_net("mlp_shared_encoder", activate_output=True),
             input_id="x"
         ),
-        y=TopGenBlock(
-            net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(500, ),
-            prior_trainable=True,
-            concat_posterior=False,
+        y=GenBlock(
+            input_id="y_prior",
             condition="hiddens",
+            prior_net=None,
+            posterior_net=migration.get_net("mlp_cluster_encoder", activate_output=False),
             output_distribution="laplace"
         ),
         z=GenBlock(
             prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
             posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
             input_id="y",
-            input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
-            condition="hiddens",
+            condition=[("hiddens",
+                        ["y",  migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True)]),
+                       "concat"],
             output_distribution="normal",
-            concat_posterior=False
         ),
         y_concat_z=SimpleBlock(
             net=migration.get_net("skip_mlp_data_decoder", activate_output=False),
             input_id="y",
         ),
-        z_skip=ConcatBlock(
-            inputs=["z", "y_concat_z"],
-            dimension=1
-        ),
         x_hat=OutputBlock(
             net=[migration.get_net("concat_mlp_data_decoder", activate_output=False),
                  Unflatten(1, data_params.shape),
                  FixedStdDev(0.4)],
-            input_id="z_skip",
+            input_id=[("z", "y_concat_z"), "concat"],
             output_distribution="normal"
         ),
     )
 
+    _prior=OrderedDict(
+        y_prior=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1)
+    )
+
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model

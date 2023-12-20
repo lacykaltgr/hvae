@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 
 def _model():
-    from src.hvae.block import InputBlock, ContrastiveOutputBlock, TopGenBlock, SimpleGenBlock
+    from src.hvae.block import InputBlock, ContrastiveOutputBlock, GenBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, FixedStdDev, RandomScaler, Unflatten
 
@@ -10,12 +10,12 @@ def _model():
         x=InputBlock(
             net=[Flatten(start_dim=1), RandomScaler()],  #0: batch-flatten, 1: sample-flatten
         ),
-        z=TopGenBlock(
-            net=x_to_z_net,
-            prior_trainable=False,
-            prior_data=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1),
+        z=GenBlock(
+            prior_net=None,
+            posterior_net=x_to_z_net,
+            input_id="z_prior",
             condition="x",
-            output_distribution="normal"
+            output_distribution="normal",
         ),
         x_hat=ContrastiveOutputBlock(
             input_id="z",
@@ -25,8 +25,13 @@ def _model():
         ),
     )
 
+    _prior=OrderedDict(
+        z_prior=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1)
+    )
+
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model

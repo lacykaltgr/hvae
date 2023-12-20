@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 
 import numpy as np
@@ -8,7 +7,7 @@ from torch import tensor
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from src.hvae.block import GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock
+from src.hvae.block import GenBlock, OutputBlock, SimpleGenBlock
 from src.checkpoint import Checkpoint
 from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
@@ -148,8 +147,7 @@ def reconstruct(net, dataset: DataLoader, variate_masks=None, logger: logging.Lo
 
     :param net: hVAE, the network
     :param dataset: DataLoader, the dataset
-    :param artifacts_folder: str, the folder to save the images to
-    :param latents_folder: str, the folder to save the latents to
+    :param variate_masks: list, the variate masks
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
@@ -225,12 +223,12 @@ def generate(net, logger: logging.Logger):
             temperatures = temperature_setting
         elif isinstance(temperature_setting, float):
             temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)),
+                list(filter(lambda x: isinstance(x, (GenBlock, OutputBlock, SimpleGenBlock)),
                             net.generator.blocks)))
         elif isinstance(temperature_setting, tuple):
             # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, TopGenBlock, OutputBlock, SimpleGenBlock)),
+            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, OutputBlock, SimpleGenBlock)),
                                       net.generator.blocks))
             temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
             temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]

@@ -1,35 +1,48 @@
 from collections import OrderedDict
 
+
 def _model():
-    from src.hvae.block import InputBlock, OutputBlock, GenBlock
+    from src.hvae.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Unflatten, Flatten
+    from src.elements.layers import Unflatten
 
     _blocks = OrderedDict(
-        x=InputBlock(
-            net=Flatten(start_dim=1),
+        x=InputBlock(),
+        hiddens=SimpleBlock(
+            net=x_to_hiddens_net,
+            input_id="x"
+        ),
+        y=GenBlock(
+            prior_net=None,
+            posterior_net=hiddens_to_y_net,
+            concat_posterior=False,
+            input_id="y_prior",
+            condition="hiddens",
+            output_distribution="laplace"
+        ),
+        y_concat=SimpleBlock(
+            net=y_to_concat_net,
+            input_id="y",
         ),
         z=GenBlock(
-            prior_net=None,
-            posterior_net=x_to_z_net,
-            input_id="z_prior",
-            condition="x",
-            output_distribution="laplace",
+            prior_net=z_prior_net,
+            posterior_net=z_posterior_net,
+            input_id=["y", y_to_concat_net],
+            condition=[("hiddens", "y"), "concat"],
+            output_distribution="normal",
+            concat_posterior=True,
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape[1:]))],
+            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
             input_id="z",
-            output_distribution="laplace"
+            output_distribution="normal"
         ),
     )
 
     prior_shape = (1, 250)
-    _prior = OrderedDict(
-        z_prior=torch.nn.Parameter(
-            torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1), requires_grad=True)
+    _prior=OrderedDict(
+        y_prior=torch.cat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
     )
-
-
 
     __model = hvae(
         blocks=_blocks,
@@ -37,6 +50,7 @@ def _model():
     )
 
     return __model
+
 
 # --------------------------------------------------
 # HYPERPAEAMETERS
@@ -51,7 +65,7 @@ LOGGING HYPERPARAMETERS
 """
 log_params = Hyperparams(
     dir='experiments/',
-    name='LinearVAE',
+    name='ConvTDVAE',
 
     # TRAIN LOG
     # --------------------
@@ -65,12 +79,12 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
+    load_from_eval='path_to_directory/checkpoint.pth',
 
 
     # SYNTHESIS
     # --------------------
-    load_from_analysis='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
+    load_from_analysis='path_to_directory/checkpoint.pth',
 )
 
 """
@@ -404,27 +418,67 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-
 x_size = torch.prod(torch.tensor(data_params.shape))
+z_size = 1800
+hiddens_size = 2000
 y_size = 250
 
-
-x_to_z_net = Hyperparams(
+x_to_hiddens_net = Hyperparams(
     type='mlp',
     input_size=x_size,
-    hidden_sizes=[2000],
+    hidden_sizes=[],
+    output_size=hiddens_size,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=True,
+)
+
+hiddens_to_y_net = Hyperparams(
+    type='mlp',
+    input_size=hiddens_size,
+    hidden_sizes=[1000, 500],
     output_size=2*y_size,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True
+    activate_output=True,
+)
+
+y_to_concat_net = Hyperparams(
+    type='mlp',
+    input_size=y_size,
+    hidden_sizes=[500, 1000],
+    output_size=hiddens_size,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=True,
+)
+
+z_prior_net = Hyperparams(
+    type='mlp',
+    input_size=hiddens_size,
+    hidden_sizes=[2000],
+    output_size=2*z_size,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=True,
+)
+
+z_posterior_net = Hyperparams(
+    type='mlp',
+    input_size=2*hiddens_size,
+    hidden_sizes=[],
+    output_size=2*z_size,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=True,
 )
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=y_size,
-    hidden_sizes=[2000],
+    input_size=z_size,
+    hidden_sizes=[],
     output_size=2*x_size,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True
+    activate_output=True,
 )

@@ -3,7 +3,7 @@ import torch
 
 
 def _model(migration):
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten, FixedStdDev
 
@@ -15,22 +15,21 @@ def _model(migration):
             net=migration.get_net("mlp_shared_encoder", activate_output=True),
             input_id="x"
         ),
-        y=TopGenBlock(
-            net=migration.get_net("mlp_cluster_encoder", activate_output=False),
-            prior_shape=(250, ),
-            prior_trainable=False,
-            concat_posterior=False,
+        y=GenBlock(
+            prior_net=None,
+            posterior_net=migration.get_net("mlp_cluster_encoder", activate_output=False),
+            input_id="y_prior",
             condition="hiddens",
             output_distribution="normal"
         ),
         z=GenBlock(
             prior_net=migration.get_net("mlp_latent_decoder", activate_output=False),
             posterior_net=migration.get_net("mlp_latent_encoder_concat_to_z", activate_output=False),
-            input_transform=migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True),
             input_id="y",
-            condition="hiddens",
+            condition=[("hiddens",
+                        ["y", migration.get_net("mlp_latent_encoder_y_to_concat", activate_output=True)]),
+                       "concat"],
             output_distribution="laplace",
-            concat_posterior=True,
         ),
         x_hat=OutputBlock(
             net=[migration.get_net("mlp_data_decoder", activate_output=False),
@@ -39,6 +38,10 @@ def _model(migration):
             input_id="z",
             output_distribution="normal"
         ),
+    )
+
+    _prior=OrderedDict(
+        y_prior=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1)
     )
 
     __model = hvae(

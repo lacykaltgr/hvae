@@ -2,7 +2,7 @@ from collections import OrderedDict
 import torch
 
 def _model():
-    from src.hvae.block import SimpleGenBlock, InputBlock, OutputBlock, TopGenBlock
+    from src.hvae.block import SimpleGenBlock, InputBlock, OutputBlock, GenBlock
     from src.hvae.hvae import hVAE as hvae
     from src.elements.layers import Flatten, Unflatten
 
@@ -15,11 +15,10 @@ def _model():
             input_id="x",
             output_distribution="normal"
         ),
-        y=TopGenBlock(
-            net=hiddens_to_y_net,
-            prior_shape=(500, ),
-            prior_trainable=True,
-            concat_posterior=False,
+        y=GenBlock(
+            prior_net=None,
+            posterior_net=hiddens_to_y_net,
+            input_id="y_prior",
             condition="hiddens",
             output_distribution="laplace"
         ),
@@ -35,8 +34,14 @@ def _model():
         ),
     )
 
+    prior_shape = (1, 250)
+    _prior=OrderedDict(
+        y_prior=torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
+    )
+
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model

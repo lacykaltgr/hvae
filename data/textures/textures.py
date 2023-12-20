@@ -5,7 +5,7 @@ import pickle
 from src.elements.dataset import _DataSet
 import os
 
-root = "/mnt/hvae/"
+root = "/Users/laszlofreund/code/ai/hvae/"
 
 
 class TexturesDataset(_DataSet):

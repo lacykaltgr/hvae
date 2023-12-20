@@ -132,9 +132,9 @@ class FixedStdDev(SerializableModule):
 
 
 class Slice(SerializableModule):
-    def __init__(self, slice):
+    def __init__(self, *slice_indices):
         super(Slice, self).__init__()
-        self.slice = slice
+        self.slice = slice(*slice_indices)
 
     def forward(self, x):
         return x[:, self.slice]

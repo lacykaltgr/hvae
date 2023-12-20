@@ -7,7 +7,7 @@ from collections import OrderedDict
 from src.utils import OrderedModuleDict
 from src.utils import handle_shared_modules
 
-from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopSimpleBlock, SimpleGenBlock, TopGenBlock
+from src.hvae.block import GenBlock, InputBlock, OutputBlock
 from src.hvae.model import train, reconstruct, generate, evaluate
 from src.hvae.analysis_tools import model_summary, compute_per_dimension_divergence_stats
 
@@ -31,9 +31,10 @@ class Encoder(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, blocks: OrderedModuleDict):
+    def __init__(self, blocks: OrderedModuleDict, prior: dict):
         super(Generator, self).__init__()
         self.blocks: OrderedModuleDict = blocks
+        self.prior = prior
 
     def forward(self, computed: dict, distributions: dict, variate_masks: list = None,
                 to_compute: str = None, use_mean: bool = False) -> (dict, dict):
@@ -62,7 +63,8 @@ class Generator(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks: OrderedDict):
+    def __init__(self, blocks: OrderedDict, init: dict = None,
+                 encoder: type = Encoder, generator: type = Generator):
         super(hVAE, self).__init__()
 
         encoder_blocks = OrderedModuleDict()
@@ -79,15 +81,15 @@ class hVAE(nn.Module):
                 assert isinstance(block, OutputBlock)
                 self.output_block = block
                 continue
-            if isinstance(block, (TopGenBlock, TopSimpleBlock)):
+            if isinstance(block, GenBlock):
                 in_generator = True
             if in_generator:
                 generator_blocks.update({output: block})
             else:
                 encoder_blocks.update({output: block})
 
-        self.encoder: Encoder = Encoder(encoder_blocks)
-        self.generator: Generator = Generator(generator_blocks)
+        self.encoder: encoder = encoder(encoder_blocks)
+        self.generator: generator = generator(generator_blocks, prior=init)
 
     def compute_function(self, block_name='output') -> callable:
         if block_name == 'output':
