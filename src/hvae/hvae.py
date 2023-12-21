@@ -17,8 +17,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.blocks: OrderedModuleDict = encoder_blocks
 
-    def forward(self, x: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
-        computed = x
+    def forward(self, computed: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
         distributions = dict()
         for block in self.blocks.values():
             output = block(computed, use_mean=use_mean)
@@ -31,10 +30,9 @@ class Encoder(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, blocks: OrderedModuleDict, prior: dict):
+    def __init__(self, blocks: OrderedModuleDict):
         super(Generator, self).__init__()
         self.blocks: OrderedModuleDict = blocks
-        self.prior = prior
 
     def forward(self, computed: dict, distributions: dict, variate_masks: list = None,
                 to_compute: str = None, use_mean: bool = False) -> (dict, dict):
@@ -63,8 +61,7 @@ class Generator(nn.Module):
 
 
 class hVAE(nn.Module):
-    def __init__(self, blocks: OrderedDict, init: dict = None,
-                 encoder: type = Encoder, generator: type = Generator):
+    def __init__(self, blocks: OrderedDict, init: dict = None):
         super(hVAE, self).__init__()
 
         encoder_blocks = OrderedModuleDict()
@@ -88,8 +85,9 @@ class hVAE(nn.Module):
             else:
                 encoder_blocks.update({output: block})
 
-        self.encoder: encoder = encoder(encoder_blocks)
-        self.generator: generator = generator(generator_blocks, prior=init)
+        self.encoder: Encoder = Encoder(encoder_blocks)
+        self.generator: Generator = Generator(generator_blocks)
+        self.prior = init
 
     def compute_function(self, block_name='output') -> callable:
         if block_name == 'output':
@@ -162,6 +160,12 @@ class hVAE(nn.Module):
     def test_model(self, test_loader):
         return evaluate(self, test_loader)
 
+    def _init_prior(self, computed, batch_size) -> dict:
+        for key, value in self.prior.items():
+            batched_prior = torch.tile(value, (batch_size, 1))
+            computed[key] = batched_prior
+        return computed
+
     def sample_from_prior(self, batch_size: int, temperatures: list) -> (tensor, dict):
         computed, distributions = self.generator.sample_from_prior(batch_size, temperatures)
         computed, output_distribution = self.output_block.sample_from_prior(computed)
@@ -171,6 +175,7 @@ class hVAE(nn.Module):
 
     def forward(self, x: tensor, variate_masks=None, use_mean=False) -> (dict, dict):
         computed = self.input_block(x)
+        computed = self._init_prior(computed, x.shape[0])
         computed, distributions = self.encoder(computed, use_mean=use_mean)
         computed, distributions = self.generator(computed, distributions, variate_masks, use_mean=use_mean)
         computed, output_distribution = self.output_block(computed, use_mean=use_mean)
@@ -226,17 +231,21 @@ class hVAE(nn.Module):
         for block in self.generator.blocks.values():
             blocks.append(block.serialize())
         blocks.append(self.output_block.serialize())
-        return blocks
+        serialized = dict(
+            blocks=blocks,
+            prior=self.prior
+        )
+        return serialized
 
     @staticmethod
-    def deserialize(serialized_blocks):
+    def deserialize(serialized):
         blocks = OrderedDict()
         shared = dict()
-        for block in serialized_blocks:
+        for block in serialized["blocks"]:
             deserialized = block["type"].deserialize(block)
             deserialized, shared = handle_shared_modules(deserialized, shared)
             blocks[block["output"]] = deserialized
-        return hVAE(blocks)
+        return hVAE(blocks, serialized["prior"])
 
     @staticmethod
     def load(path):

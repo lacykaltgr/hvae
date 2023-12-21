@@ -3,7 +3,7 @@ from src.utils import SerializableModule
 
 
 def _model():
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, TopGenBlock, SimpleBlock
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
     from src.hvae.sequence import hSequenceVAE
     from src.elements.layers import Conv2d, Slice, FixedStdDev
     from src.utils import SharedSerializableSequential as Shared
@@ -28,21 +28,18 @@ def _model():
             output_distribution="normal",
             fuse_prior="concat"
         ),
-
         z=GenBlock(
             prior_net=manifold_recon,
             posterior_net=z_posterior,
             input_id=[("_z_manifold", "h"), "add"],
             condition="sparse_mu_sigma",
             output_distribution="laplace",
-            fuse_prior="concat"
+            fuse_prior="concat",
         ),
-
             z_manifold=SimpleBlock(
                 net=shared_net,
                 input_id="z",
             ),
-
         x_hat=OutputBlock(
             net=[z_to_x, FixedStdDev(0.4)],
             input_id="z",
