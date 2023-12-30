@@ -1,8 +1,6 @@
-from typing import List
 import numpy as np
 import torch
 from overrides import overrides
-from torch import nn
 from torch import tensor
 
 from src.elements.distributions import generate_distribution
@@ -21,8 +19,8 @@ class _Block(SerializableModule):
 
     def __init__(self, input_id: str or list or tuple = None):
         super(_Block, self).__init__()
-        self.input = self.InputPipeline(input_id)
-        self.output = input_id + "_out" if input_id is not None else None
+        self.input = InputPipeline(input_id)
+        self.output = None
 
     def forward(self, computed: dict, **kwargs) -> (dict, None):
         return dict(), None
@@ -46,29 +44,38 @@ class _Block(SerializableModule):
         )
 
 
-class InputPipeline:
+class InputPipeline(SerializableModule):
     """
     Helper class for preprocessing pipeline
     """
     def __init__(self, input_pipeline: str or tuple or list):
+        super(InputPipeline, self).__init__()
         self.inputs = input_pipeline
 
-    def __call__(self, computed):
+    def forward(self, computed):
         return self._load(computed, self.inputs)
 
     def serialize(self):
-        if isinstance(self.inputs, str):
-            return self.inputs
-        elif isinstance(self.inputs, list):
+        return self._serialize(self.inputs)
+
+    def _serialize(self, item):
+        if isinstance(item, str):
+            return item
+        elif isinstance(item, list):
             return [i.serialize() if isinstance(i, SerializableModule)
-                    else i for i in self.inputs]
+                    else self._serialize(i) for i in item]
+        elif isinstance(item, tuple):
+            return tuple([self._serialize(i) for i in item])
 
     @staticmethod
     def deserialize(serialized):
         if isinstance(serialized, str):
             return serialized
         elif isinstance(serialized, list):
-            return [InputPipeline.deserialize(i) for i in serialized]
+            return [i["type"].deserialize(i) if isinstance(i, dict) and "type" in i.keys()
+                    else InputPipeline.deserialize(i) for i in serialized]
+        elif isinstance(serialized, tuple):
+            return tuple([InputPipeline.deserialize(i) for i in serialized])
 
     @staticmethod
     def _load(computed: dict, inputs):
@@ -205,7 +212,22 @@ class SimpleGenBlock(_Block):
         )
 
 
-OutputBlock = SimpleGenBlock
+class OutputBlock(SimpleGenBlock):
+    def __init__(self, net, input_id, output_distribution: str = 'normal'):
+        super(OutputBlock, self).__init__(net, input_id, output_distribution)
+
+    def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> tensor:
+        computed, distribtion = super()._sample_uncond(y, t, use_mean)
+        return computed, distribtion[0]
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        return OutputBlock(
+            net=prior_net,
+            input_id=InputPipeline.deserialize(serialized["input"]),
+            output_distribution=serialized["output_distribution"]
+        )
 
 
 class GenBlock(SimpleGenBlock):
@@ -227,7 +249,7 @@ class GenBlock(SimpleGenBlock):
         super(GenBlock, self).__init__(prior_net, input_id, output_distribution)
         self.prior_net: Sequential = get_net(prior_net)
         self.posterior_net: Sequential = get_net(posterior_net)
-        self.condition = self.InputPipeline(condition)
+        self.condition = InputPipeline(condition)
         self.fuse_prior = fuse_prior
 
     def _sample(self, y: tensor, cond: tensor, variate_mask=None, use_mean=False) -> (tensor, tuple):
@@ -283,7 +305,7 @@ class GenBlock(SimpleGenBlock):
         return z
 
     @staticmethod
-    def fuse(cond, prior, method):
+    def fuse(prior, cond, method):
         if method == "concat":
             return torch.cat([cond, prior], dim=1)
         elif method == "add":

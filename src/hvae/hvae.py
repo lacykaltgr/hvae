@@ -17,8 +17,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.blocks: OrderedModuleDict = encoder_blocks
 
-    def forward(self, computed: tensor, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
-        distributions = dict()
+    def forward(self, computed: tensor, distributions: dict, to_compute: str = None, use_mean: bool = False) -> (tensor, dict):
         for block in self.blocks.values():
             output = block(computed, use_mean=use_mean)
             computed, dists = output
@@ -162,7 +161,8 @@ class hVAE(nn.Module):
 
     def _init_prior(self, computed, batch_size) -> dict:
         for key, value in self.prior.items():
-            batched_prior = torch.tile(value, (batch_size, 1))
+            dims = [1] * len(value.shape)
+            batched_prior = torch.tile(value, (batch_size, *dims))
             computed[key] = batched_prior
         return computed
 
@@ -176,7 +176,8 @@ class hVAE(nn.Module):
     def forward(self, x: tensor, variate_masks=None, use_mean=False) -> (dict, dict):
         computed = self.input_block(x)
         computed = self._init_prior(computed, x.shape[0])
-        computed, distributions = self.encoder(computed, use_mean=use_mean)
+        distributions = dict()
+        computed, distributions = self.encoder(computed, distributions, use_mean=use_mean)
         computed, distributions = self.generator(computed, distributions, variate_masks, use_mean=use_mean)
         computed, output_distribution = self.output_block(computed, use_mean=use_mean)
         computed['output'] = computed[self.output_block.output]

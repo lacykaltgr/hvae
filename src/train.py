@@ -4,7 +4,7 @@ import torch
 from src.hparams import get_hparams
 from src.elements.optimizers import get_optimizer
 from src.elements.schedules import get_schedule
-from src.utils import load_experiment_for, create_tb_writer_for, setup_logger
+from src.utils import load_experiment_for, setup_logger, wandb_init
 from src.hvae.model import train
 
 
@@ -24,8 +24,8 @@ def main():
 
     with torch.no_grad():
         _ = model(torch.ones((1, *p.data_params.shape)))
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    logger.info(f'Train step generator trainable params '
+    model_parameters = filter(lambda param: param.requires_grad, model.parameters())
+    logger.info(f'Number of trainable params '
                 f'{np.sum([np.prod(v.size()) for v in model_parameters]) / 1000000:.3f}m.')
     model = model.to(device)
 
@@ -51,16 +51,14 @@ def main():
     train_loader = dataset.get_train_loader(p.train_params.batch_size)
     val_loader = dataset.get_val_loader(p.eval_params.batch_size)
 
-    writer_train = create_tb_writer_for('train', checkpoint_path=checkpoint_path)
-    writer_val = create_tb_writer_for('val', checkpoint_path=checkpoint_path)
+    wandb = wandb_init(name=p.log_params.name, config=p.to_json())
 
     if p.train_params.unfreeze_first:
         model.unfreeeze()
     if len(p.train_params.freeze_nets) > 0:
         model.freeze(p.train_params.freeze_nets)
 
-    train(model, optimizer, schedule, train_loader, val_loader, gloabal_step,
-          writer_train, writer_val, checkpoint_path, logger)
+    train(model, optimizer, schedule, train_loader, val_loader, gloabal_step, wandb, checkpoint_path, logger)
 
 
 if __name__ == '__main__':

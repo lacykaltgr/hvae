@@ -61,8 +61,6 @@ def get_kl_loss():
         raise ValueError(f'Unknown kl loss: {params.loss_params.kldiv_loss}')
 
 
-
-
 class LogProb(nn.Module):
 
     """
@@ -76,7 +74,7 @@ class LogProb(nn.Module):
         super(LogProb, self).__init__()
         self.data_shape = data_shape
 
-    def forward(self, targets, distribution: Distribution, global_batch_size=32):
+    def forward(self, targets, distribution: Distribution, global_batch_size=128):
         targets = targets.reshape(distribution.batch_shape)
         log_probs = distribution.log_prob(targets + 1e-8)
         log_p_x = torch.flatten(log_probs, start_dim=1)
@@ -246,7 +244,7 @@ class KLDivergence(nn.Module):
         super(KLDivergence, self).__init__()
         self.data_shape = data_shape
 
-    def forward(self, prior: Distribution, posterior: Distribution, global_batch_size=32):
+    def forward(self, prior: Distribution, posterior: Distribution, global_batch_size=128):
         if isinstance(prior, Normal):
             loss = self.calculate_normal_loss(posterior.mean, prior.mean, posterior.stddev, prior.stddev)
         elif isinstance(prior, Laplace):
@@ -360,6 +358,12 @@ class SSIM(nn.Module):
         return (luminance * contrast_structure).mean(dim=(-2, -1))
 
     def forward(self, targets, outputs):
+        if len(outputs.size()) == 5:
+            shape = targets.shape
+            new_channel = shape[1] * shape[2]
+            shape = [shape[0], new_channel, shape[3], shape[4]]
+            outputs = outputs.reshape(shape)
+            targets = targets.reshape(shape)
         ssim_per_channel = self._compute_one_channel_ssim(targets, outputs)
         return ssim_per_channel.mean(dim=-1)
 

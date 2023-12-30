@@ -8,7 +8,7 @@ from src.hparams import get_hparams
 from src.hvae.model import generate
 from src.hvae.analysis_tools import compute_per_dimension_divergence_stats, decodability, generate_mei, \
     get_optimal_gabor, latent_step_analysis, plot_reconstruction, white_noise_analysis
-from src.utils import write_image_to_disk, setup_logger, load_experiment_for
+from src.utils import setup_logger, load_experiment_for
 
 
 def divergence_stats_mode(model, dataset, save_path, logger: logging.Logger = None):

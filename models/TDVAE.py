@@ -40,11 +40,12 @@ def _model():
     )
 
     _prior=OrderedDict(
-        y_prior=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1)
+        y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 
     __model = hvae(
         blocks=_blocks,
+        init=_prior
     )
 
     return __model

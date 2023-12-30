@@ -5,15 +5,13 @@ import numpy as np
 import torch
 from torch import tensor
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 from src.hvae.block import GenBlock, OutputBlock, SimpleGenBlock
 from src.checkpoint import Checkpoint
 from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
 from src.elements.schedules import get_beta_schedule, get_gamma_schedule
-from src.utils import tensorboard_log, linear_temperature, \
-    prepare_for_log, print_line, log_to_csv
+from src.utils import linear_temperature, prepare_for_log, print_line, wandb_log_results
 
 prms = get_hparams()
 device = prms.model_params.device
@@ -40,7 +38,7 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
         return prms.loss_params.custom_loss(targets=targets, logits=logits,
                                             distributions=distributions, step_n=step_n)
 
-    output_distribution = distributions['output'][0]
+    output_distribution = distributions.pop('output')
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
     global_variational_prior_losses = []
@@ -61,18 +59,17 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
     global_var_loss = kldiv_schedule(step_n) * global_variational_prior_loss  # beta
     total_generator_loss = -feature_matching_loss + global_var_loss
 
-    scalar = np.log(2.)
-    kl_div = torch.sum(global_variational_prior_losses) / scalar
+    kl_div = torch.sum(global_variational_prior_losses) / np.log(2.)
     return dict(
         elbo=total_generator_loss,
         reconstruction_loss=feature_matching_loss,
         avg_reconstruction_loss=avg_feature_matching_loss,
         kl_div=kl_div,
-        avg_var_prior_losses=avg_global_var_prior_losses,
+        avg_var_prior_loss=torch.sum(torch.stack(avg_global_var_prior_losses)),
     )
 
 
-def global_norm(net):
+def gradient_norm(net):
     """
     Compute the global norm of the gradients of the network parameters
     based on Efficient-VDVAE paper
@@ -96,7 +93,7 @@ def gradient_clip(net):
         total_norm = torch.nn.utils.clip_grad_norm_(net.parameters(),
                                                     max_norm=prms.optimizer_params.gradient_clip_norm_value)
     else:
-        total_norm = global_norm(net)
+        total_norm = gradient_norm(net)
     return total_norm
 
 
@@ -151,47 +148,10 @@ def reconstruct(net, dataset: DataLoader, variate_masks=None, logger: logging.Lo
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
-
-    nelbos, ssims = 0., 0.
-    io_pairs = list()
-    step = 0
     n_samples = prms.analysis_params.reconstruction.n_samples_for_reconstruction
-    for step, inputs in enumerate(dataset):
-        n_samples -= prms.analysis_params.batch_size
-        inputs = inputs.to(device)
-        computed, distributions, loss = reconstruction_step(net, inputs, variates_masks=variate_masks)
-        outputs = computed['output'].detach().cpu()
-
-        ssim_per_batch = ssim_metric(inputs, outputs, global_batch_size=prms.analysis_params.batch_size)
-        ssims += ssim_per_batch
-        nelbo = loss['elbo']
-        rec_loss = loss["reconstruction_loss"]
-        kl_div = loss['kl_div']
-        nelbos += nelbo
-
-        output_samples = distributions['output'][0].sample()
-        output_means = distributions['output'][0].mean
-        for i in range(inputs.shape[0]):
-            io_pairs.append([inputs[i], output_samples[i], output_means[i]])
-
-        logger.info(
-            f'Step: {step:04d}  | '
-            f'NELBO: {nelbo:.4f} | '
-            f'Reconstruction: {rec_loss:.4f} | '
-            f'kl_div: {kl_div:.4f}| '
-            f'SSIM: {ssim_per_batch:.4f} ')
-
-        if n_samples <= 0:
-            break
-
-    if n_samples < 0:
-        io_pairs = io_pairs[:n_samples+prms.analysis_params.batch_size]
-
-    nelbo = nelbos / (step + 1)
-    ssim = ssims / (step + 1)
-    print_line(logger, newline_after=False)
-    logger.info(f'NELBO: {nelbo:.6f} | SSIM: {ssim:.6f}')
-    return io_pairs
+    results, (original, output_samples, output_means) = \
+        evaluate(net, dataset, n_samples=n_samples, variates_masks=variate_masks, logger=logger)
+    return original, output_samples, output_means
 
 
 def generation_step(net, temperatures: list):
@@ -278,53 +238,51 @@ def train_step(net, optimizer, schedule, inputs, step_n):
 def train(net,
           optimizer, schedule,
           train_loader: DataLoader, val_loader: DataLoader,
-          checkpoint_start_step: int,
-          tb_writer_train: SummaryWriter, tb_writer_val: SummaryWriter,
+          start_step: int, wandb,
           checkpoint_path: str, logger: logging.Logger) -> None:
     """
     Train the network
     based on Efficient-VDVAE paper
 
-    :param net: hVAE, the networkű
+    :param net: hVAE, the network
     :param optimizer: torch.optim.Optimizer, the optimizer
     :param schedule: torch.optim.lr_scheduler.LRScheduler, the scheduler
     :param train_loader: DataLoader, the training dataset
     :param val_loader: DataLoader, the validation dataset
-    :param checkpoint_start_step: int, the step number to start from
-    :param tb_writer_train: SummaryWriter, the tensorboard writer for training
-    :param tb_writer_val: SummaryWriter, the tensorboard writer for validation
+    :param start_step: int, the step number to start from
+    :param wandb: wandb run object
     :param checkpoint_path: str, the path to save the checkpoints to
     :param logger: logging.Logger, the logger
     :return: None
     """
-    global_step = checkpoint_start_step
+    global_step = start_step
     gradient_skip_counter = 0.
 
-    net.train()
     total_train_epochs = int(np.ceil(prms.train_params.total_train_steps / len(train_loader)))
     for epoch in range(total_train_epochs):
         for batch_n, train_inputs in enumerate(train_loader):
+            net.train()
             global_step += 1
             train_inputs = train_inputs.to(device, non_blocking=True)
             start_time = time.time()
             train_outputs, train_results, global_norm, gradient_skip_counter_delta = \
                 train_step(net, optimizer, schedule, train_inputs, global_step)
             end_time = round((time.time() - start_time), 2)
-
             gradient_skip_counter += gradient_skip_counter_delta
 
+            train_results.update({
+                "time": end_time,
+                "beta": kldiv_schedule(global_step),
+                "grad_norm": global_norm,
+                "grad_skip_count": gradient_skip_counter,
+            })
             train_results = prepare_for_log(train_results)
             logger.info((global_step,
                          ('Time/Step (sec)', end_time),
-                         ('Reconstruction Loss', round(train_results["reconstruction_loss"], 3)),
-                         ('KL loss', round(train_results["kl_div"], 3)),
                          ('ELBO', round(train_results["elbo"], 4)),
-                         ('average KL loss', round(train_results["var_loss"], 3)),
-                         ('Beta', round(kldiv_schedule(global_step).detach().cpu().item(), 4)),
-                         ('N° active groups', train_results["n_active_groups"]),
-                         ('GradNorm', round(global_norm.detach().cpu().item(), 1)),
-                         ('GradSkipCount', gradient_skip_counter),))
-            log_to_csv(train_results, checkpoint_path, 'train')
+                         ('Reconstruction Loss', round(train_results["reconstruction_loss"], 3)),
+                         ('KL loss', round(train_results["kl_div"], 3))))
+            wandb_log_results(wandb, train_results, global_step, mode='train')
 
             """
             EVALUATION AND CHECKPOINTING
@@ -339,85 +297,92 @@ def train(net,
             if eval_time or first_step:
                 train_ssim = ssim_metric(train_inputs, train_outputs, global_batch_size=prms.train_params.batch_size)
                 logger.info(
-                    f'Train Stats for global_step {global_step} | NELBO {train_results["elbo"]} | 'f'SSIM: {train_ssim}')
-                val_results, val_outputs, val_inputs = evaluate(net, val_loader, global_step, logger=logger)
+                    f'Train Stats | '
+                    f'ELBO {train_results["elbo"]} | '
+                    f'Reconstruction Loss {train_results["reconstruction_loss"]:.4f} |'
+                    f'KL Div {train_results["kl_div"]:.4f} |'
+                    f'SSIM: {train_ssim}')
+                val_results, _ = evaluate(net, val_loader,
+                                          n_samples=prms.eval_params.n_samples_for_validation,
+                                          global_step=global_step, logger=logger)
                 val_results = prepare_for_log(val_results)
-                log_to_csv(val_results, checkpoint_path, 'val')
-                # Tensorboard logging
-                logger.info('Logging to Tensorboard..')
-                tensorboard_log(net, optimizer, global_step,
-                                tb_writer_train, train_results,
-                                train_outputs, train_inputs)
-                tensorboard_log(net, optimizer, global_step,
-                                tb_writer_val, val_results,
-                                val_outputs, val_inputs, mode='val')
+
+                wandb_log_results(wandb, {'train_ssim': train_ssim}, global_step, mode='train')
+                wandb_log_results(wandb, val_results, global_step, mode='validation')
 
             if checkpoint_time or first_step:
                 # Save checkpoint (only if better than best)
                 experiment = Checkpoint(global_step, net, optimizer, schedule, prms)
-                path = experiment.save(checkpoint_path)
+                path = experiment.save(checkpoint_path, wandb)
                 logger.info(f'Saved checkpoint for global_step {global_step} to {path}')
 
             if eval_time or checkpoint_time:
                 print_line(logger, newline_after=True)
-            net.train()
 
             if global_step >= prms.train_params.total_train_steps:
                 logger.info(f'Finished training after {global_step} steps!')
                 return
 
 
-def evaluate(net, val_loader: DataLoader, global_step: int = None, use_mean=False, logger: logging.Logger = None) -> tuple:
+def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = None,
+             use_mean=False, variates_masks=None, logger: logging.Logger = None) -> tuple:
     """
     Evaluate the network on the given dataset
     based on Efficient-VDVAE paper
 
     :param net: hVAE, the network
     :param val_loader: DataLoader, the dataset
+    :param n_samples: number of samples to evaluate
     :param global_step: int, the current step number
     :param use_mean: use the mean of the distributions instead of sampling
+    :param variates_masks: variates masks
     :param logger: logging.Logger, the logger
     :return: dict, tensor, tensor, the loss values, the output images, the input images
     """
     net.eval()
 
-    n_samples = prms.eval_params.n_samples_for_validation
-    val_inputs, val_outputs, val_results = None, None, None
     val_step = 0
-    val_feature_matching_losses = 0
-    val_global_varprior_losses = None
-    val_ssim = 0
-    val_kl_divs = 0
+    global_results, original, output_samples, output_means = None, None, None, None
 
     for val_step, val_inputs in enumerate(val_loader):
         n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
         val_computed, val_distributions, val_results = \
-            reconstruction_step(net, inputs=val_inputs, step_n=global_step, use_mean=use_mean)
+            reconstruction_step(net, inputs=val_inputs, variates_masks=variates_masks,
+                                step_n=global_step, use_mean=use_mean)
         val_outputs = val_computed["output"]
-
         val_ssim_per_batch = ssim_metric(val_inputs, val_outputs, global_batch_size=prms.eval_params.batch_size)
-        val_feature_matching_losses += val_results["reconstruction_loss"]
-        val_ssim += val_ssim_per_batch
-        val_kl_divs += val_results["kl_div"]
-        val_global_varprior_losses = val_results["avg_var_prior_losses"] \
-            if val_global_varprior_losses is None \
-            else [u + v for u, v in zip(val_global_varprior_losses, val_results["avg_var_prior_losses"])]
+
+        val_inputs = val_inputs.detach().cpu()
+        val_outputs = val_outputs.detach().cpu()
+        val_output_means = val_distributions['output'].mean.detach().cpu()
+        val_ssim_per_batch = val_ssim_per_batch.detach().cpu()
+        if global_results is None:
+            val_results["ssim"] = val_ssim_per_batch
+            global_results = val_results
+            original = val_inputs
+            output_samples = val_outputs
+            output_means = val_output_means
+        else:
+            val_results["ssim"] = val_ssim_per_batch
+            global_results = {k: v + val_results[k] for k, v in global_results.items()}
+            original = torch.cat((original, val_inputs), dim=0)
+            output_samples = torch.cat((output_samples, val_outputs), dim=0)
+            output_means = torch.cat((output_means, val_output_means), dim=0)
+
         if n_samples <= 0:
             break
-    global_results = dict(
-        reconstruction_loss=val_feature_matching_losses / (val_step + 1),
-        kl_div=val_kl_divs / (val_step + 1),
-        ssim=val_ssim / (val_step + 1),
-        avg_var_prior_losses=val_global_varprior_losses,
-    )
+
+    global_results = {k: v / (val_step + 1) for k, v in global_results.items()}
+    global_results["avg_elbo"] = global_results["elbo"]
     global_results["elbo"] = global_results["kl_div"] + global_results["reconstruction_loss"]
 
     log = logger.info if logger is not None else print
     log(
-        f'Validation Stats|'
+        f'Validation Stats |'
+        f' ELBO {global_results["elbo"]:.6f} |'
         f' Reconstruction Loss {global_results["reconstruction_loss"]:.4f} |'
-        f' KL Div {global_results["kl_div"]:.4f} |'f'NELBO {global_results["elbo"]:.6f} |'
+        f' KL Div {global_results["kl_div"]:.4f} |'
         f' SSIM: {global_results["ssim"]:.6f}')
 
-    return global_results, val_outputs, val_inputs
+    return global_results, (original, output_samples, output_means)

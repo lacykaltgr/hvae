@@ -2,9 +2,9 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.LinearModel as params
+    import models.TDVAE as params
 
-    return Hyperparams(
+    config = Hyperparams(
         log_params=params.log_params,
         model_params=params.model_params,
         data_params=params.data_params,
@@ -13,15 +13,12 @@ def get_hparams():
         loss_params=params.loss_params,
         eval_params=params.eval_params,
         analysis_params=params.analysis_params,
-
-        migration_params=params.migration_params
-        if hasattr(params, 'migration_params') else None,
-
-        mlp_params=params.mlp_params,
-        conv_params=params.cnn_params,
-        pool_params=params.pool_params,
-        unpool_params=params.unpool_params,
     )
+
+    if hasattr(params, 'migration_params'):
+        config.migration_params = params.migration_params
+
+    return config
 
 
 class Hyperparams:
@@ -54,6 +51,7 @@ class Hyperparams:
     def to_json(self):
         from types import FunctionType
         from data.textures.textures import TexturesDataset
+
         def convert_to_json_serializable(obj):
             if isinstance(obj, Hyperparams):
                 return convert_to_json_serializable(obj.config)

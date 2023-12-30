@@ -1,6 +1,9 @@
+from typing import Optional, Any, Dict
+
 import numpy as np
 import torch
 from torch import tensor, nn, distributions as dist, Size
+from torch.distributions import constraints
 
 from src.hparams import get_hparams
 from src.utils import one_hot
@@ -159,3 +162,56 @@ class MixtureOfLogistics(dist.distribution.Distribution):
 
     def entropy(self) -> torch.Tensor:
         raise NotImplementedError()
+
+
+class ConcatenatedDistribution(dist.distribution.Distribution):
+    """
+    Concatenated distribution
+
+    """
+    def __init__(self, distributions: list, fuse: str = 'sum'):
+        self.distributions = distributions
+        self.fuse = fuse
+        batch_shape = (len(distributions),) + distributions[0].batch_shape
+        super(ConcatenatedDistribution, self).__init__(batch_shape=batch_shape)
+
+    @property
+    def mean(self) -> torch.Tensor:
+        means = [d.mean for d in self.distributions]
+        means = torch.stack(means, dim=0)
+        return means
+
+    @property
+    def variance(self) -> torch.Tensor:
+        variances = [d.variance for d in self.distributions]
+        variances = torch.stack(variances, dim=0)
+        return variances
+
+    def rsample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
+        samples = [d.rsample(sample_shape) for d in self.distributions]
+        samples = torch.stack(samples, dim=0)
+        return samples
+
+    def log_prob(self, value: torch.Tensor) -> torch.Tensor:
+        log_probs = [d.log_prob(value) for d in self.distributions]
+        log_probs = torch.stack(log_probs, dim=0)
+        if self.fuse == 'sum':
+            log_probs = torch.sum(log_probs, dim=0)
+        elif self.fuse == 'mean':
+            log_probs = torch.mean(log_probs, dim=0)
+        else:
+            raise ValueError(f'Unknown fuse {self.fuse}')
+        return log_probs
+
+    def entropy(self) -> torch.Tensor:
+        entropies = [d.entropy() for d in self.distributions]
+        entropies = torch.stack(entropies, dim=0)
+        if self.fuse == 'sum':
+            entropies = torch.sum(entropies, dim=0)
+        elif self.fuse == 'mean':
+            entropies = torch.mean(entropies, dim=0)
+        else:
+            raise ValueError(f'Unknown fuse {self.fuse}')
+        return entropies
+
+

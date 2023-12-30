@@ -8,12 +8,12 @@ def _model():
     from src.elements.layers import Conv2d, Slice, FixedStdDev
     from src.utils import SharedSerializableSequential as Shared
 
-    shared_net = Shared(Conv2d(40, 4, 3, 1, 1))
+    shared_net = Shared(Conv2d(40, 4, 3, 1, 'SAME'))
 
     _blocks = OrderedDict(
         x=InputBlock(),
             sparse_mu_sigma=SimpleBlock(
-                net=x_to_sparse,
+                net=[x_to_sparse_0, x_to_sparse_1],
                 input_id="x",
             ),
             h_manifold=SimpleBlock(
@@ -41,17 +41,17 @@ def _model():
                 input_id="z",
             ),
         x_hat=OutputBlock(
-            net=[z_to_x, FixedStdDev(0.4)],
+            net=[z_to_x_0, z_to_x_1, FixedStdDev(0.4)],
             input_id="z",
             output_distribution="normal"
         ),
     )
 
     _init = OrderedDict(
-        _h_manifold=torch.zeros(size=(1, 4, 10, 10)),
-        _h=torch.zeros(size=(1, 4, 10, 10)),
-        _z=torch.zeros(size=(1, 40, 10, 10)),
-        _z_manifold=torch.zeros(size=(1, 4, 10, 10)),
+        _h_manifold=torch.zeros(size=(4, 10, 10)),
+        _h=torch.zeros(size=(4, 10, 10)),
+        _z=torch.zeros(size=(40, 10, 10)),
+        _z_manifold=torch.zeros(size=(4, 10, 10)),
     )
 
     __model = hSequenceVAE(
@@ -140,16 +140,16 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.textures.textures import TexturesDataset
+from data.forest_walk.forest_walk import ForestVideoDataset
 
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=TexturesDataset,
-    params=dict(type="natural", image_size=40, whitening="old"),
+    dataset=ForestVideoDataset,
+    params=dict(seq_len=5, n_frames=10_000, frame_rate=2, patch_size=40, whiten=False, n_downsamples=2),
 
     # Image metadata
-    shape=(1, 40, 40),
+    shape=(5, 1, 40, 40),
     # Image color depth in the dataset (bit-depth of each color channel)
     num_bits=8.,
 )
@@ -437,27 +437,26 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_to_sparse = Hyperparams(
-    type="conv",
-    n_layers=0,
+x_to_sparse_0 = Hyperparams(
+    type='pool',
     in_filters=1,
-    bottleneck_ratio=40,
-    output_ratio=40,
-    kernel_size=3,
-    use_1x1=False,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=torch.nn.ReLU(),
-    residual=False,
+    filters=40,
+    strides=2,
+)
+
+x_to_sparse_1 = Hyperparams(
+    type='pool',
+    in_filters=40,
+    filters=80,
+    strides=2,
 )
 
 manifold_recon = Hyperparams(
     type="conv",
     n_layers=0,
     in_filters=4,
-    bottleneck_ratio=40,
-    output_ratio=40,
+    bottleneck_ratio=10,
+    output_ratio=2*10,
     kernel_size=3,
     use_1x1=False,
     init_scaler=1.,
@@ -470,9 +469,9 @@ manifold_recon = Hyperparams(
 z_posterior = Hyperparams(
     type="conv",
     n_layers=0,
-    in_filters=80,
-    bottleneck_ratio=40,
-    output_ratio=80,
+    in_filters=160,
+    bottleneck_ratio=0.5,
+    output_ratio=0.5,
     kernel_size=3,
     use_1x1=False,
     init_scaler=1.,
@@ -482,17 +481,16 @@ z_posterior = Hyperparams(
     residual=False,
 )
 
-z_to_x = Hyperparams(
-    type="conv",
-    n_layers=0,
+z_to_x_0 = Hyperparams(
+    type='unpool',
     in_filters=40,
-    bottleneck_ratio=20,
-    output_ratio=1,
-    kernel_size=3,
-    use_1x1=False,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
+    filters=10,
+    strides=2,
+)
+
+z_to_x_1 = Hyperparams(
+    type='unpool',
+    in_filters=10,
+    filters=1,
+    strides=2,
 )

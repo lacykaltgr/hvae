@@ -2,11 +2,9 @@ import os
 import logging
 import json
 import pickle
-import numpy
 import numpy as np
 import torch
 from torch.nn import Sequential, Module, ModuleList
-from torch.utils.tensorboard import SummaryWriter
 
 from src.hparams import get_hparams
 
@@ -188,31 +186,6 @@ def get_save_load_paths(mode='train'):
         raise ValueError(f"Unknown mode {mode}")
 
 
-def tensorboard_log(model, optimizer, global_step, writer,
-                    losses, outputs, targets, mode='train'):
-    for key, value in losses.items():
-        if isinstance(value, (torch.Tensor, numpy.ndarray)) and len(value.shape) == 0 \
-                or isinstance(value, (float, int)):
-            writer.add_scalar(f"Losses/{key}", value, global_step)
-    writer.add_histogram("Distributions/target", targets, global_step, bins=20)
-    writer.add_histogram("Distributions/output", torch.clamp(outputs, min=-1., max=1.), global_step, bins=20)
-
-    if mode == 'train':
-        for variable in model.parameters():
-            writer.add_histogram(f"Weights/{variable.name}", variable, global_step)
-        # Get the learning rate from the optimizer
-        writer.add_scalar("Schedules/learning_rate", optimizer.param_groups[0]['lr'], global_step)
-
-    # Save artifacts
-    plot_image(outputs[0], targets[0], global_step, writer=writer)
-    writer.flush()
-
-
-def plot_image(outputs, targets, step, writer):
-    writer.add_image(f"{step}/Original_{step}", targets, step)
-    writer.add_image(f"{step}/Generated_{step}", outputs, step)
-
-
 def load_experiment_for(mode: str = 'test'):
     from src.checkpoint import Checkpoint
     load_from_file, save_to_path = get_save_load_paths(mode)
@@ -225,33 +198,6 @@ def load_experiment_for(mode: str = 'test'):
     return experiment, save_to_path
 
 
-def create_tb_writer_for(mode: str, checkpoint_path: str):
-    logdir = os.path.join(checkpoint_path, 'tensorboard')
-    tbdir = os.path.join(logdir, mode)
-    os.makedirs(logdir, exist_ok=True)
-    os.makedirs(tbdir, exist_ok=True)
-    writer = SummaryWriter(log_dir=tbdir)
-    return writer
-
-
-def write_image_to_disk(filepath, image):
-    from PIL import Image
-
-    if image.shape[0] == 3:
-        image = np.round(image * 127.5 + 127.5)
-        image = image.astype(np.uint8)
-        image = np.transpose(image, (1, 2, 0))
-        im = Image.fromarray(image)
-        im.save(filepath, format='png')
-    else:
-        for im in image:
-            im = im.astype(np.uint8)
-            while len(im.shape) > 2:
-                im = np.squeeze(im, axis=0)
-            im = Image.fromarray(im)
-            im.save(filepath, format='png')
-
-
 def setup_logger(checkpoint_path: str) -> logging.Logger:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger('logger')
@@ -261,21 +207,10 @@ def setup_logger(checkpoint_path: str) -> logging.Logger:
 
 
 def prepare_for_log(results: dict):
-    if "elbo" in results.keys():
-        results["elbo"] = results["elbo"].detach().cpu().item()
-    if "reconstruction_loss" in results.keys():
-        results["reconstruction_loss"] = results["reconstruction_loss"].detach().cpu().item()
-    if "kl_div" in results.keys():
-        results["kl_div"] = results["kl_div"].detach().cpu().item()
-    if "avg_reconstruction_loss" in results.keys():
-        results["avg_reconstruction_loss"] = results["avg_reconstruction_loss"].detach().cpu().item()
-    if "avg_var_prior_losses" in results.keys():
-        results["var_loss"] = np.sum([v.detach().cpu().item() for v in results["avg_var_prior_losses"]])
-        p = get_hparams().eval_params
-        results["n_active_groups"] = np.sum([v >= p.latent_active_threshold
-                                             for v in results["avg_var_prior_losses"]])
-        results.update({f'latent_kl_{i}': v.detach().cpu().item() for i, v in enumerate(results["avg_var_prior_losses"])})
-        results.pop("avg_var_prior_losses")
+    results = {k: (v.detach().cpu().item()
+                   if isinstance(v, torch.Tensor)
+                   else v)
+               for k, v in results.items() if v is not None}
     return results
 
 
@@ -314,6 +249,50 @@ def log_to_csv(results, checkpoint_path, mode: str = 'train'):
 
 def print_line(logger: logging.Logger, newline_after: False):
     logger.info('\n' + '-' * 89 + ('\n' if newline_after else ''))
+
+
+def wandb_init(name, config):
+    import wandb
+    run = wandb.init(
+        project=name,
+        config=config
+    )
+    return run
+
+
+def wandb_log_results(run, results, global_step=None, mode='Train'):
+    results = {f"{mode}/{k}": v for k, v in results.items()}
+    run.log(results, step=global_step)
+
+
+def wandb_log_image(image, global_step, mode='train'):
+    import wandb
+    if mode == 'train':
+        wandb.log({"image": wandb.Image(image)}, step=global_step)
+    elif mode == 'test':
+        wandb.log({"image": wandb.Image(image)})
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+
+def wandb_log_video(video, global_step, mode='train'):
+    import wandb
+    if mode == 'train':
+        wandb.log({"video": wandb.Video(video)}, step=global_step)
+    elif mode == 'test':
+        wandb.log({"video": wandb.Video(video)})
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+
+def wandb_log_artifact(artifact, global_step, mode='train'):
+    import wandb
+    if mode == 'train':
+        wandb.log_artifact(artifact, step=global_step)
+    elif mode == 'test':
+        wandb.log_artifact(artifact)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
 
 
 """
@@ -356,30 +335,30 @@ class SerializableModule(Module):
 
 
 class SharedSerializableSequential(SerializableSequential):
-        def __init__(self, id):
-            super().__init__()
-            # generate random id
-            if id is None:
-                self.id = np.random.randint(0, 1000000)
+    def __init__(self, _id):
+        super().__init__()
+        # generate random id
+        if _id is None:
+            self.id = np.random.randint(0, 1000000)
+        else:
+            self.id = _id
+
+    def serialize(self):
+        return dict(type=self.__class__, params=dict(id=self.id))
+
+    @staticmethod
+    def deserialize(serialized):
+        return serialized["type"](serialized["params"]["id"])
+
+
+def handle_shared_modules(module, shared_nets):
+    for net in module.children():
+        if isinstance(net, SharedSerializableSequential):
+            if net.id not in shared_nets.keys():
+                shared_nets[net.id] = net
             else:
-                self.id = id
-
-        def serialize(self):
-            return dict(type=self.__class__, params=dict(id=self.id))
-
-        @staticmethod
-        def deserialize(serialized):
-            return serialized["type"](serialized["params"]["id"])
-
-
-def handle_shared_modules(module, shared_modules):
-    for module in module.children():
-        if isinstance(module, SharedSerializableSequential):
-            if module.id not in shared_modules.keys():
-                shared_modules[module.id] = module
-            else:
-                module = shared_modules.pop(module.id)
-    return module, shared_modules
+                net.parameters = shared_nets.pop(net.id).parameters
+    return module, shared_nets
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -395,5 +374,5 @@ class NumpyEncoder(json.JSONEncoder):
 
 def unpickle(file):
     with open(file, 'rb') as fo:
-        dict = pickle.load(fo)
-    return dict
+        _dict = pickle.load(fo)
+    return _dict

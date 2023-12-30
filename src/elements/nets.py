@@ -21,16 +21,6 @@ def get_net(model) -> Sequential:
     if model is None:
         return Sequential()
 
-    # Load model from default hyperparameter config
-    elif isinstance(model, str):
-        params = get_hparams()
-        if model == 'mlp':
-            return Sequential(MLPNet.from_hparams(params.mlp_params))
-        elif model == 'conv':
-            return Sequential(ConvNet.from_hparams(params.cnn_params))
-        else:
-            raise NotImplementedError("Model type not supported.")
-
     # Load model from hyperparameter config
     elif isinstance(model, Hyperparams):
 
@@ -40,6 +30,10 @@ def get_net(model) -> Sequential:
             return Sequential(MLPNet.from_hparams(model))
         elif model.type == 'conv':
             return Sequential(ConvNet.from_hparams(model))
+        elif model.type == 'pool':
+            return Sequential(PoolLayer.from_hparams(model))
+        elif model.type == 'unpool':
+            return Sequential(UnpooLayer.from_hparams(model))
         else:
             raise NotImplementedError("Model type not supported.")
 
@@ -151,8 +145,16 @@ class ConvNet(SerializableModule):
     def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
                  , residual=True, use_1x1=True, pool_strides=0, unpool_strides=0, output_ratio=1.0, activation=nn.SiLU()):
         super(ConvNet, self).__init__()
-
+        self.n_layers = n_layers
+        self.in_filters = in_filters
         self.residual = residual
+        self.bottleneck_ratio = bottleneck_ratio
+        self.kernel_size = kernel_size
+        self.init_scaler = init_scaler
+        self.use_1x1 = use_1x1
+        self.pool_strides = pool_strides
+        self.unpool_strides = unpool_strides
+        self.activation = activation
         self.output_ratio = output_ratio
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)

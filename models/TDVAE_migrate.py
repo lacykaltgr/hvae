@@ -41,11 +41,12 @@ def _model(migration):
     )
 
     _prior=OrderedDict(
-        y_prior=torch.cat((torch.zeros(1, 250), torch.ones(1, 250)), dim=1)
+        y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 
     __model = hvae(
         blocks=_blocks,
+        init=_prior,
     )
 
     return __model
@@ -93,7 +94,7 @@ log_params = Hyperparams(
 
     # EVAL
     # --------------------
-    load_from_eval='migration/2023-10-17__11-45/migrated_checkpoint.pth',
+    load_from_eval='migration/2023-12-27__01-40/migrated_checkpoint.pth',
 
 
     # SYNTHESIS
@@ -109,7 +110,7 @@ MODEL HYPERPARAMETERS
 
 model_params = Hyperparams(
     model=_model,
-    device='cuda',
+    device='cpu',
     seed=420,
 
     # Latent layer distribution base can be in ('std', 'logstd').
@@ -263,11 +264,7 @@ eval_params = Hyperparams(
     # validation batch size
     batch_size=128,
 
-    use_mean=False,
-
-    # Threshold used to mark latent groups as "active".
-    # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
+    use_mean=True
 )
 
 """
@@ -376,59 +373,3 @@ analysis_params = Hyperparams(
         output_temperature=1.
     )
 )
-
-"""
---------------------
-BLOCK HYPERPARAMETERS
---------------------
-"""
-import torch
-# These are the default parameters,
-# use this for reference when creating custom blocks.
-
-mlp_params = Hyperparams(
-    type='mlp',
-    input_size=1000,
-    hidden_sizes=[],
-    output_size=1000,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True
-)
-
-cnn_params = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=1.,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
-)
-
-pool_params = Hyperparams(
-    type='pool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-unpool_params = Hyperparams(
-    type='unpool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-
-"""
---------------------
-CUSTOM BLOCK HYPERPARAMETERS
---------------------
-"""
-# add your custom block hyperparameters here

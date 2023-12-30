@@ -2,7 +2,7 @@ from src.hvae.hvae import hVAE
 from torch import tensor
 import torch
 from collections import OrderedDict
-import torch.distributions as dist
+from src.elements.distributions import ConcatenatedDistribution
 
 
 class hSequenceVAE(hVAE):
@@ -20,25 +20,26 @@ class hSequenceVAE(hVAE):
         seq_len = x.shape[1]
         computed = dict()
         distributions = dict()
+        outputs = []
+        output_distributions = []
 
         for i in range(seq_len):
             observation_computed = self.input_block(x[:, i])
             if i == 0:
                 observation_computed = self._init_prior(observation_computed, x.shape[0])
-                observation_computed['outputs'] = []
-                distributions['outputs'] = []
             computed.update(observation_computed)
-            computed, distributions = self.encoder(computed, use_mean=use_mean)
+            computed, distributions = self.encoder(computed, distributions, use_mean=use_mean)
             computed, distributions = self.generator(computed, distributions, variate_masks, use_mean=use_mean)
             computed, output_distribution = self.output_block(computed, use_mean=use_mean)
-            computed['outputs'].append(computed[self.output_block.output])
-            distributions['outputs'].append(dist.Independent(output_distribution, 1))
 
-            computed = {f'_{key}': value for key, value in computed.items()},
+            outputs.append(computed[self.output_block.output])
+            output_distributions.append(output_distribution)
+
+            computed = {f'_{key}': value for key, value in computed.items()}
             distributions = {f'_{key}': value for key, value in distributions.items()}
 
-        computed['output'] = torch.stack(list(computed['outputs']), dim=1)
-        #distributions['output'] =
+        computed['output'] = torch.stack(outputs, dim=1)
+        distributions['output'] = ConcatenatedDistribution(output_distributions, fuse='sum')
         return computed, distributions
 
     def visualize_graph(self) -> None:

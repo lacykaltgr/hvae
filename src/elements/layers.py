@@ -35,6 +35,7 @@ class Interpolate(SerializableModule):
 class UnpooLayer(SerializableModule):
     def __init__(self, in_filters, filters, strides):
         super(UnpooLayer, self).__init__()
+        self.in_filters = in_filters
         self.filters = filters
 
         if isinstance(strides, int):
@@ -75,12 +76,21 @@ class UnpooLayer(SerializableModule):
     def deserialize(serialized):
         layer = UnpooLayer(**serialized["params"])
         layer.scale_bias = serialized["scale_bias"]
+        return layer
+
+    @staticmethod
+    def from_hparams(hparams):
+        return UnpooLayer(
+            in_filters=hparams.in_filters,
+            filters=hparams.filters,
+            strides=hparams.strides
+        )
 
 
 class PoolLayer(SerializableModule):
     def __init__(self, in_filters, filters, strides):
         super(PoolLayer, self).__init__()
-        self.in_filtes = in_filters
+        self.in_filters = in_filters
         self.filters = filters
         self.strides = strides
 
@@ -109,6 +119,14 @@ class PoolLayer(SerializableModule):
     @staticmethod
     def deserialize(serialized):
         return PoolLayer(**serialized["params"])
+
+    @staticmethod
+    def from_hparams(hparams):
+        return PoolLayer(
+            in_filters=hparams.in_filters,
+            filters=hparams.filters,
+            strides=hparams.strides
+        )
 
 
 class FixedStdDev(SerializableModule):
