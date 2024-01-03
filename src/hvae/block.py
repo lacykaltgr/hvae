@@ -369,6 +369,21 @@ class ContrastiveOutputBlock(OutputBlock):
         z = prior.sample() if not use_mean else prior.mean
         return z, (prior, None)
 
+    def serialize(self) -> dict:
+        serialized = super().serialize()
+        serialized["contrast_dims"] = self.contrast_dims
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized: dict):
+        prior_net = Sequential.deserialize(serialized["prior_net"])
+        return ContrastiveOutputBlock(
+            net=prior_net,
+            input_id=InputPipeline.deserialize(serialized["input"]),
+            contrast_dims=serialized["contrast_dims"],
+            output_distribution=serialized["output_distribution"]
+        )
+
 
 class ResidualGenBlock(GenBlock):
     """

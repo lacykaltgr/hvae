@@ -303,6 +303,21 @@ class Unflatten(torch.nn.Unflatten, SerializableModule):
     def deserialize(serialized):
         return Unflatten(**serialized["params"])
 
+
 class RandomScaler(SerializableModule):
+
+    def __init__(self):
+        super(RandomScaler, self).__init__()
+
     def forward(self, x):
         return x * torch.randn((1,))
+
+    def serialize(self):
+        serialized = super().serialize()
+        return serialized
+
+    @staticmethod
+    def deserialize(serialized):
+        return RandomScaler()
+
+
