@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import tensor
 from torch.utils.data import DataLoader
+import wandb
 
 from src.hvae.block import GenBlock, OutputBlock, SimpleGenBlock
 from src.checkpoint import Checkpoint
@@ -32,20 +33,23 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
     :param logits: tensor, the logits for the output block
     :param step_n: int, the current step number
     :return: dict, containing the loss values
+
     """
+
     # Use custom loss funtion if provided
     if prms.loss_params.custom_loss is not None:
         return prms.loss_params.custom_loss(targets=targets, logits=logits,
                                             distributions=distributions, step_n=step_n)
 
-    output_distribution = distributions.pop('output')
+    output_distribution = distributions['output']
     feature_matching_loss, avg_feature_matching_loss = reconstruction_loss(targets, output_distribution)
 
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
-    for block_name, (prior, posterior) in distributions.items():
-        if block_name == 'output' or posterior is None:
+    for block_name, dists in distributions.items():
+        if block_name == 'output' or dists is None or len(dists) != 2:
             continue
+        prior, posterior = dists
         loss, avg_loss = kl_divergence(prior, posterior)
         global_variational_prior_losses.append(loss)
         avg_global_var_prior_losses.append(avg_loss)
@@ -116,42 +120,77 @@ def gradient_skip(global_norm):
     return skip, gradient_skip_counter_delta
 
 
-def reconstruction_step(net, inputs: tensor, variates_masks=None, step_n=None, use_mean=False):
+def reconstruction_step(net, inputs: tensor, step_n=None, use_mean=False):
     """
     Perform a reconstruction with the given network and inputs
     based on Efficient-VDVAE paper
 
     :param net: hVAE, the network
     :param inputs: tensor, the input images
-    :param variates_masks: list, the variate masks
     :param step_n: int, the current step number
     :param use_mean: use the mean of the distributions instead of sampling
     :return: tensor, tensor, dict, the output images, the computed features, the loss values
     """
     net.eval()
     with torch.no_grad():
-        computed, distributions = net(inputs, variates_masks, use_mean=use_mean)
+        computed, distributions = net(inputs, use_mean=use_mean)
         if step_n is None:
             step_n = max(prms.loss_params.vae_beta_anneal_steps, prms.loss_params.gamma_max_steps) * 10.
         results = compute_loss(inputs, distributions, step_n=step_n)
         return computed, distributions, results
 
 
-def reconstruct(net, dataset: DataLoader, variate_masks=None, logger: logging.Logger = None):
+def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, logger: logging.Logger = None):
     """
     Reconstruct the images from the given dataset
     based on Efficient-VDVAE paper
 
     :param net: hVAE, the network
     :param dataset: DataLoader, the dataset
-    :param variate_masks: list, the variate masks
+    :param wandb_run: wandb run object
+    :param use_mean: use the mean of the distributions instead of sampling
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
-    n_samples = prms.analysis_params.reconstruction.n_samples_for_reconstruction
+
+    # Evaluation
+    n_samples_for_eval = prms.eval_params.n_samples_for_validation
     results, (original, output_samples, output_means) = \
-        evaluate(net, dataset, n_samples=n_samples, variates_masks=variate_masks, logger=logger)
-    return original, output_samples, output_means
+        evaluate(net, dataset, n_samples=n_samples_for_eval, use_mean=use_mean, logger=logger)
+
+
+    # Reconstruction
+    n_samples_for_reconstruct = prms.eval_params.n_samples_for_reconstruction
+    for i in range(n_samples_for_reconstruct):
+        o = wandb.Image(original[i], caption=f'Original {i}')
+        s = wandb.Image(output_samples[i], caption=f'Sample {i}')
+        m = wandb.Image(output_means[i], caption=f'Mean {i}')
+        wandb_run.log({"reconstruction": [o, s, m]})
+
+    """
+    # Plot
+    row_titles = ["Original", "Sampled", "Mean"]
+    n = len(io_pairs)
+    m = len(row_titles)
+    fig, axes = plt.subplots(nrows=m, ncols=n, figsize=(12, 8))
+    for ax, row in zip(axes[:, 0], row_titles):
+        ax.set_title(row, size='large')
+    for j in range(n):
+        for i in range(m):
+            if io_pairs[i][j].shape[0] == 1:
+                io_pairs[i][j] = io_pairs[i][j][0]
+            image = io_pairs[i][j]
+            axes[j, i].imshow(image, interpolation='none', cmap='gray')
+            axes[j, i].axis('off')
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_path, f"reconstruction.png"), facecolor="white")
+    
+    """
+    test_table = wandb.Table(data=[list(prepare_for_log(results).values())], columns=list(results.keys()))
+    wandb_run.log({"test": test_table})
+
+    return results
 
 
 def generation_step(net, temperatures: list):
@@ -238,7 +277,7 @@ def train_step(net, optimizer, schedule, inputs, step_n):
 def train(net,
           optimizer, schedule,
           train_loader: DataLoader, val_loader: DataLoader,
-          start_step: int, wandb,
+          start_step: int, wandb_run: wandb.run,
           checkpoint_path: str, logger: logging.Logger) -> None:
     """
     Train the network
@@ -250,7 +289,7 @@ def train(net,
     :param train_loader: DataLoader, the training dataset
     :param val_loader: DataLoader, the validation dataset
     :param start_step: int, the step number to start from
-    :param wandb: wandb run object
+    :param wandb_run: wandb run object
     :param checkpoint_path: str, the path to save the checkpoints to
     :param logger: logging.Logger, the logger
     :return: None
@@ -282,7 +321,7 @@ def train(net,
                          ('ELBO', round(train_results["elbo"], 4)),
                          ('Reconstruction Loss', round(train_results["reconstruction_loss"], 3)),
                          ('KL loss', round(train_results["kl_div"], 3))))
-            wandb_log_results(wandb, train_results, global_step, mode='train')
+            wandb_log_results(wandb_run, train_results, global_step, mode='train')
 
             """
             EVALUATION AND CHECKPOINTING
@@ -307,13 +346,13 @@ def train(net,
                                           global_step=global_step, logger=logger)
                 val_results = prepare_for_log(val_results)
 
-                wandb_log_results(wandb, {'train_ssim': train_ssim}, global_step, mode='train')
-                wandb_log_results(wandb, val_results, global_step, mode='validation')
+                wandb_log_results(wandb_run, {'train_ssim': train_ssim}, global_step, mode='train')
+                wandb_log_results(wandb_run, val_results, global_step, mode='validation')
 
             if checkpoint_time or first_step:
                 # Save checkpoint (only if better than best)
                 experiment = Checkpoint(global_step, net, optimizer, schedule, prms)
-                path = experiment.save(checkpoint_path, wandb)
+                path = experiment.save(checkpoint_path, wandb_run)
                 logger.info(f'Saved checkpoint for global_step {global_step} to {path}')
 
             if eval_time or checkpoint_time:
@@ -325,7 +364,7 @@ def train(net,
 
 
 def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = None,
-             use_mean=False, variates_masks=None, logger: logging.Logger = None) -> tuple:
+             use_mean=False, logger: logging.Logger = None) -> tuple:
     """
     Evaluate the network on the given dataset
     based on Efficient-VDVAE paper
@@ -335,7 +374,6 @@ def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = Non
     :param n_samples: number of samples to evaluate
     :param global_step: int, the current step number
     :param use_mean: use the mean of the distributions instead of sampling
-    :param variates_masks: variates masks
     :param logger: logging.Logger, the logger
     :return: dict, tensor, tensor, the loss values, the output images, the input images
     """
@@ -348,8 +386,7 @@ def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = Non
         n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
         val_computed, val_distributions, val_results = \
-            reconstruction_step(net, inputs=val_inputs, variates_masks=variates_masks,
-                                step_n=global_step, use_mean=use_mean)
+            reconstruction_step(net, inputs=val_inputs, step_n=global_step, use_mean=use_mean)
         val_outputs = val_computed["output"]
         val_ssim_per_batch = ssim_metric(val_inputs, val_outputs, global_batch_size=prms.eval_params.batch_size)
 

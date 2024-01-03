@@ -16,7 +16,7 @@ class hSequenceVAE(hVAE):
         distributions['output'] = output_distribution
         return computed, distributions
 
-    def forward(self, x: tensor, variate_masks=None, use_mean=False) -> (dict, dict):
+    def forward(self, x: tensor,  use_mean=False) -> (dict, dict):
         seq_len = x.shape[1]
         computed = dict()
         distributions = dict()
@@ -29,7 +29,7 @@ class hSequenceVAE(hVAE):
                 observation_computed = self._init_prior(observation_computed, x.shape[0])
             computed.update(observation_computed)
             computed, distributions = self.encoder(computed, distributions, use_mean=use_mean)
-            computed, distributions = self.generator(computed, distributions, variate_masks, use_mean=use_mean)
+            computed, distributions = self.generator(computed, distributions, use_mean=use_mean)
             computed, output_distribution = self.output_block(computed, use_mean=use_mean)
 
             outputs.append(computed[self.output_block.output])

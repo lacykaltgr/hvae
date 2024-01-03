@@ -70,36 +70,6 @@ def decodability(model, labeled_loader, filepath):
         json.dump(accuracies, f, cls=NumpyEncoder)
 
 
-def plot_reconstruction(net, dataloader, save_path, logger):
-    # Variate Masks
-    if get_hparams().analysis_params.reconstruction.mask_reconstruction:
-        div_stats = np.load(os.path.join(save_path, 'div_stats.npy'))
-        variate_masks = get_variate_masks(div_stats).astype(np.float32)
-    else:
-        variate_masks = None
-
-    # Reconstruction
-    io_pairs = reconstruct(net, dataloader, variate_masks=variate_masks, logger=logger)
-
-    # Plot
-    row_titles = ["Original", "Sampled", "Mean"]
-    n = len(io_pairs)
-    m = len(row_titles)
-    fig, axes = plt.subplots(nrows=m, ncols=n, figsize=(12, 8))
-    for ax, row in zip(axes[:, 0], row_titles):
-        ax.set_title(row, size='large')
-    for j in range(n):
-        for i in range(m):
-            if io_pairs[i][j].shape[0] == 1:
-                io_pairs[i][j] = io_pairs[i][j][0]
-            image = io_pairs[i][j]
-            axes[j, i].imshow(image, interpolation='none', cmap='gray')
-            axes[j, i].axis('off')
-
-    fig.tight_layout()
-    fig.savefig(os.path.join(save_path, f"reconstruction.png"), facecolor="white")
-
-
 def latent_step_analysis(model, sample, target_block, save_path, n_cols=10, diff=1, value=1, n_dims=70):
     compute_target_block = model.compute_function(target_block)
     target_computed, _ = compute_target_block(sample)
@@ -201,47 +171,5 @@ def generate_mei(model, target_block, query_config):
     from matplotlib.pyplot import imsave
     imsave('mei.png', meip.image.detach().cpu().numpy())
     return meip
-
-
-def get_optimal_gabor(model, target_block, query):
-    from meitorch.gabor import Gabor
-
-    def get_target_block(x):
-        compute_function = model.compute_function(target_block)
-        computed, _ = compute_function(x)
-        return computed[target_block]
-
-    gabor = Gabor(models=[get_target_block], shape=(3, 32, 32))
-    gaborp = gabor.optimal_gabor(query)
-    return gaborp
-
-
-def compute_per_dimension_divergence_stats(net, dataset: DataLoader) -> tensor:
-    """
-    Compute the per-dimension KL divergence statistics for the given network and dataset
-    based on Efficient-VDVAE paper
-
-    :param net: hVAE, the network
-    :param dataset: DataLoader, the dataset
-    :return: tensor, the per-dimension KL divergence statistics
-    """
-    per_dim_divs = None
-    with torch.no_grad():
-        for step, inputs in enumerate(tqdm(dataset)):
-            inputs = inputs.to(device, non_blocking=True)
-            _, distributions = net(inputs)
-            avg_losses = []
-
-            for block_name, (prior, posterior) in distributions.items():
-                if block_name == 'output' or posterior is None:
-                    continue
-                _, avg_loss = kl_divergence(prior, posterior)
-                avg_losses.append(avg_loss)
-            kl_div = torch.stack(avg_losses)
-            per_dim_divs = kl_div if per_dim_divs is None else per_dim_divs + kl_div
-            if step > get_hparams().analysis_params.div_stats.div_stats_subset_ratio * len(dataset):
-                break
-    per_dim_divs /= (step + 1)
-    return per_dim_divs
 
 

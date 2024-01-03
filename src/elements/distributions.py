@@ -32,12 +32,12 @@ def generate_distribution(mu: tensor, sigma: tensor = None, distribution: str = 
     if distribution == 'mixture_of_logistics' or distribution == 'mol':
         return MixtureOfLogistics(
             logits=mu,
-            n_output_mixtures=model_params.num_output_mixtures,
+            n_output_mixtures=10, # TODO: make this a parameter
             temperature=1,
             distribution_base=model_params.distribution_base,
             gradient_smoothing_beta=model_params.gradient_smoothing_beta,
             n_channels=data_params.shape[-1],
-            min_mol_logscale=model_params.min_mol_logscale,
+            min_mol_logscale=250., # TODO: make this a parameter
             min_pix_value=0,
             max_pix_value=255,
         )
@@ -79,7 +79,7 @@ class MixtureOfLogistics(dist.distribution.Distribution):
     :param temperature: the temperature of the distribution
     :param n_channels: the number of channels of the distribution
     :param gradient_smoothing_beta: the beta parameter for the gradient smoothing
-    :param min_mol_logscale: the minimum logscale of the distribution
+    :param min_mol_logscale: the minimum logscale of the distribution ((exp(-250 = 0) so it's disabled)
     :param min_pix_value: the minimum pixel value of the distribution
     :param max_pix_value: the maximum pixel value of the distribution
     :param distribution_base: 'std', 'logstd'

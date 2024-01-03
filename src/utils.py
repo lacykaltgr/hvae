@@ -4,6 +4,7 @@ import json
 import pickle
 import numpy as np
 import torch
+import wandb
 from torch.nn import Sequential, Module, ModuleList
 
 from src.hparams import get_hparams
@@ -17,18 +18,25 @@ MODEL UTILS
 
 
 class OrderedModuleDict(torch.nn.Module):
-    def __init__(self, *args):
-        super().__init__(*args)
+    def __init__(self, **kwargs):
+        super().__init__()
         self._keys = list()
         self._values = ModuleList([])
+        for key, module in kwargs.items():
+            self[key] = module
 
     def update(self, modules):
         for key, module in modules.items():
             self[key] = module
 
     def __getitem__(self, key):
-        index = self._keys.index(key)
-        return self._values[index]
+        if isinstance(key, int):
+            return self._values[key]
+        elif isinstance(key, str):
+            index = self._keys.index(key)
+            return self._values[index]
+        else:
+            raise KeyError(f"Key {key} is not a string or an integer")
 
     def __setitem__(self, key, module):
         if key in self._keys:
@@ -105,10 +113,10 @@ def get_causal_padding(kernel_size, strides, dilation_rate, n_dims=2):
     return p_
 
 
-def get_variate_masks(stats):
-    p = get_hparams()
-    thresh = np.quantile(stats, 1 - p.analysis_params.variates_masks_quantile)
-    return stats > thresh
+def get_variate_masks(stats, quantile=0.03):
+    thresh = np.quantile(stats, 1 - quantile)
+    variate_masks = stats > thresh
+    return variate_masks
 
 
 def linear_temperature(min_temp, max_temp, n_layers):
@@ -142,53 +150,59 @@ TRAIN/LOG UTILS
 """
 
 
-def get_save_load_paths(mode='train'):
+def get_save_load_paths(mode='train', run=None):
     p = get_hparams().log_params
-    if mode == 'test':
-        load_from = p.load_from_eval
-        assert load_from is not None
-        load_from_file = f'{p.dir}{p.name}/{load_from}'
-        return load_from_file, None
 
-    elif mode == 'train':
+    if mode == 'train':
         load_from = p.load_from_train
-        load_from_file = f'{p.dir}{p.name}/{load_from}' if load_from is not None else None
-        import datetime
-        p = get_hparams().log_params
-        if p.dir_naming_scheme == 'timestamp':
-            save_dir = f"{p.dir}{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}"
+        if load_from is not None:
+            if os.path.exists(load_from):
+                load_from_file = load_from
+            else:
+                wandb_dir = wandb_load_checkpoint(load_from, run)
+                load_from_file = os.path.join(wandb_dir, "model.pth")
         else:
-            save_dir = f"{p.dir}{p.name}/{p.dir_naming_scheme}"
-        # else:
-        #    raise NotImplementedError(f"Unknown dir_naming_scheme {p.dir_naming_scheme}")
-        os.makedirs(save_dir, exist_ok=True)
-        return load_from_file, save_dir
-
-    elif mode == 'analysis':
-        load_from = p.load_from_analysis
-        assert load_from is not None
-        date = load_from.split('/')[0] \
-            if load_from.split('/')[0] != "migration" else ""
-        save_folder = os.path.join(p.dir, p.name, date)
-        load_from_file = os.path.join(save_folder, load_from)
-        save_dir = os.path.join(save_folder, "analysis")
+            load_from_file = None
+        if load_from_file:
+            print(f"Loading experiment from {load_from_file}")
+        import datetime
+        save_dir = f"experiments/{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}"
         os.makedirs(save_dir, exist_ok=True)
         return load_from_file, save_dir
 
     elif mode == 'migration':
         import datetime
-        save_dir = os.path.join(f"{p.dir}{p.name}/migration",
-                                f"{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}", )
+        save_dir = f"experiments/{p.name}/{datetime.datetime.now().strftime('%Y-%m-%d__%H-%M')}"
         os.makedirs(save_dir, exist_ok=True)
         return None, save_dir
+
+    elif mode == 'test':
+        load_from = p.load_from_eval
+        assert load_from is not None
+        if os.path.exists(load_from):
+            load_from_file = load_from
+        else:
+            wandb_dir = wandb_load_checkpoint(load_from, run)
+            load_from_file = os.path.join(wandb_dir, "model.pth")
+        return load_from_file, None
+
+    elif mode == 'analysis':
+        load_from = p.load_from_eval
+        assert load_from is not None
+        if os.path.exists(load_from):
+            load_from_file = load_from
+        else:
+            wandb_dir = wandb_load_checkpoint(load_from, run)
+            load_from_file = os.path.join(wandb_dir, "model.pth")
+        return load_from_file, None
 
     else:
         raise ValueError(f"Unknown mode {mode}")
 
 
-def load_experiment_for(mode: str = 'test'):
+def load_experiment_for(mode: str = 'test', run: wandb.run = None):
     from src.checkpoint import Checkpoint
-    load_from_file, save_to_path = get_save_load_paths(mode)
+    load_from_file, save_to_path = get_save_load_paths(mode, run)
 
     experiment = None
     # load experiment from checkpoint
@@ -265,18 +279,7 @@ def wandb_log_results(run, results, global_step=None, mode='Train'):
     run.log(results, step=global_step)
 
 
-def wandb_log_image(image, global_step, mode='train'):
-    import wandb
-    if mode == 'train':
-        wandb.log({"image": wandb.Image(image)}, step=global_step)
-    elif mode == 'test':
-        wandb.log({"image": wandb.Image(image)})
-    else:
-        raise ValueError(f"Unknown mode {mode}")
-
-
 def wandb_log_video(video, global_step, mode='train'):
-    import wandb
     if mode == 'train':
         wandb.log({"video": wandb.Video(video)}, step=global_step)
     elif mode == 'test':
@@ -285,14 +288,16 @@ def wandb_log_video(video, global_step, mode='train'):
         raise ValueError(f"Unknown mode {mode}")
 
 
-def wandb_log_artifact(artifact, global_step, mode='train'):
-    import wandb
-    if mode == 'train':
-        wandb.log_artifact(artifact, step=global_step)
-    elif mode == 'test':
-        wandb.log_artifact(artifact)
-    else:
-        raise ValueError(f"Unknown mode {mode}")
+def wandb_log_checkpoint(run, path, name):
+    artifact = wandb.Artifact(name, type='model')
+    artifact.add_file(path)
+    run.log_artifact(artifact)
+
+
+def wandb_load_checkpoint(path, run):
+    artifact = run.use_artifact(path, type="model")
+    artifact_dir = artifact.download()
+    return artifact_dir
 
 
 """

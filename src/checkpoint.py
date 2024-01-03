@@ -1,6 +1,6 @@
 import torch
 import os
-from src.utils import params_to_file
+from src.utils import wandb_log_checkpoint
 import wandb
 
 
@@ -22,14 +22,11 @@ class Checkpoint:
     def save(self, path, run=None):
         checkpoint_dir = os.path.join(path, "checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint-{self.global_step}.pth")
+        checkpoint_path = os.path.join(checkpoint_dir, "model.pth")
         torch.save(self, checkpoint_path)
 
-        if wandb is not None:
-            #artifact = wandb.Artifact('model', type='model')
-            #artifact.add_file(checkpoint_path)
-            #run.log_artifact(artifact)
-            pass
+        if run is not None:
+            wandb_log_checkpoint(run, checkpoint_path, self.params.log_params.name)
         return checkpoint_path
 
     def save_migration(self, path):

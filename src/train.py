@@ -10,7 +10,8 @@ from src.hvae.model import train
 
 def main():
     p = get_hparams()
-    checkpoint, checkpoint_path = load_experiment_for('train')
+    wandb = wandb_init(name=p.log_params.name, config=p.to_json())
+    checkpoint, checkpoint_path = load_experiment_for('train', wandb)
     logger = setup_logger(checkpoint_path)
     device = p.model_params.device
 
@@ -50,8 +51,6 @@ def main():
     dataset = p.data_params.dataset(**p.data_params.params)
     train_loader = dataset.get_train_loader(p.train_params.batch_size)
     val_loader = dataset.get_val_loader(p.eval_params.batch_size)
-
-    wandb = wandb_init(name=p.log_params.name, config=p.to_json())
 
     if p.train_params.unfreeze_first:
         model.unfreeeze()

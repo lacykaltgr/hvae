@@ -37,7 +37,7 @@ def get_reconstruction_loss():
     elif params.loss_params.reconstruction_loss == 'mol':
         return DiscMixLogistic(
             data_shape=params.data_params.shape,
-            data_num_bits=params.data_params.num_bits,
+            data_num_bits=8,
             num_output_mixtures=params.model_params.num_output_mixtures,
             min_log_scale=params.model_params.min_mol_logscale,
             distribution_base=params.model_params.distribution_base,
@@ -283,7 +283,6 @@ class KLDivergence(nn.Module):
         term2 = (p_b * p_b + (p_mu - q_mu) * (p_mu - q_mu)) / (2 * q_b * q_b + e)
         loss = term1 + term2 - 0.5
         return loss
-
 
 
 class SSIM(nn.Module):

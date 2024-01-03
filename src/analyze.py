@@ -8,15 +8,8 @@ from src.hparams import get_hparams
 from src.hvae.model import generate
 from src.hvae.analysis_tools import compute_per_dimension_divergence_stats, decodability, generate_mei, \
     get_optimal_gabor, latent_step_analysis, plot_reconstruction, white_noise_analysis
-from src.utils import setup_logger, load_experiment_for
+from src.utils import setup_logger, load_experiment_for, wandb_init
 
-
-def divergence_stats_mode(model, dataset, save_path, logger: logging.Logger = None):
-    logger.info('Computing Divergence Stats')
-    stats_filepath = os.path.join(save_path, 'div_stats.npy')
-    per_dim_divs = compute_per_dimension_divergence_stats(model, dataset)
-    np.save(stats_filepath, per_dim_divs.detach().cpu().numpy())
-    logger.info(f'Divergence Stats saved to {stats_filepath}')
 
 
 def generation_mode(model, save_path, logger: logging.Logger = None):
@@ -26,17 +19,13 @@ def generation_mode(model, save_path, logger: logging.Logger = None):
     outputs = generate(model, logger)
     for temp_i, temp_outputs in enumerate(outputs):
         for sample_i, output in enumerate(temp_outputs):
+
+            # log to wandb image
+
             write_image_to_disk(os.path.join(artifacts_folder, f'setup-{temp_i:01d}-image-{sample_i:04d}.png'),
                                 output.detach().cpu().numpy())
     logger.info(f'Generated Images saved to {artifacts_folder}')
 
-
-def reconstruction_mode(model, test_dataset, save_path, logger: logging.Logger = None):
-    logger.info('Reconstructing Images')
-    rec_save_path = os.path.join(save_path, 'reconstructed_images')
-    os.makedirs(rec_save_path, exist_ok=True)
-    plot_reconstruction(model, test_dataset, rec_save_path, logger)
-    logger.info(f'Reconstructed Images saved to {rec_save_path}')
 
 
 def decodability_mode(model, labeled_loader, save_path, logger: logging.Logger = None):
@@ -58,20 +47,6 @@ def mei_mode(model, save_path, logger: logging.Logger = None):
         processes[target_block] = meip
     torch.save(processes, mei_filepath)
     logger.info(f'MEIs saved to {mei_filepath}')
-
-
-def gabor_mode(model, save_path, logger: logging.Logger = None):
-    logger.info('Generating Optimal Gabor Filters')
-    gabor_folder = os.path.join(save_path, 'gabor')
-    os.makedirs(gabor_folder, exist_ok=True)
-    gabor_filepath = os.path.join(save_path, 'gabor.pth')
-    processes = dict()
-    for target_block, config in get_hparams().analysis_params.gabor.queries.items():
-        gabor = get_optimal_gabor(model, target_block, config)
-        write_image_to_disk(os.path.join(gabor_folder, f'{target_block}.png'), gabor.image.detach().cpu().numpy())
-        processes[target_block] = gabor
-    torch.save(processes, gabor_filepath)
-    logger.info(f'Gabor Filters saved to {gabor_filepath}')
 
 
 def latent_step_analysis_mode(model, dataloader, save_path, logger: logging.Logger = None):
@@ -106,23 +81,16 @@ def main():
         _ = model(torch.ones((1, *p.data_params.shape)))
 
     model = model.to(p.model_params.device)
-
     dataset = p.data_params.dataset(**p.data_params.params)
+    wandb = wandb_init(name=p.log_params.name, config=p.to_json())
+
     for operation in p.analysis_params.ops:
-        if operation == 'reconstruction':
-            dataloader = dataset.get_test_loader(p.eval_params.batch_size)
-            reconstruction_mode(model, dataloader, save_path, logger)
-        elif operation == 'generation':
+        if operation == 'generation':
             generation_mode(model, save_path, logger)
-        elif operation == 'div_stats':
-            dataloader = dataset.get_val_loader(p.eval_params.batch_size)
-            divergence_stats_mode(model, dataloader, save_path, logger)
         elif operation == 'decodability':
             decodability_mode(model, dataset, save_path, logger)
         elif operation == 'mei':
             mei_mode(model, save_path, logger)
-        elif operation == 'gabor':
-            gabor_mode(model, save_path, logger)
         elif operation == 'white_noise_analysis':
             white_noise_analysis_mode(model, save_path, logger)
         elif operation == 'latent_step':

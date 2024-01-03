@@ -152,12 +152,15 @@ class InputBlock(SimpleBlock):
     def __init__(self, net=None):
         super(InputBlock, self).__init__(net, "input")
 
-    def forward(self, inputs: tensor, **kwargs) -> dict:
-        computed = {self.output: inputs} \
-            if self.net is None else \
-            {"input": inputs,
-             self.output: self.net(inputs)}
-        return computed
+    def forward(self, inputs: dict, **kwargs) -> tuple:
+        if isinstance(inputs, dict):
+            computed = inputs
+        elif isinstance(inputs, torch.Tensor):
+            computed = {self.output: self.net(inputs)}
+        else:
+            raise ValueError(f"Input must be a tensor or a dict got {type(inputs)}")
+        distributions = dict()
+        return computed, distributions
 
     @staticmethod
     def deserialize(serialized: dict):
@@ -215,10 +218,6 @@ class SimpleGenBlock(_Block):
 class OutputBlock(SimpleGenBlock):
     def __init__(self, net, input_id, output_distribution: str = 'normal'):
         super(OutputBlock, self).__init__(net, input_id, output_distribution)
-
-    def _sample_uncond(self, y: tensor, t: float or int = None, use_mean=False) -> tensor:
-        computed, distribtion = super()._sample_uncond(y, t, use_mean)
-        return computed, distribtion[0]
 
     @staticmethod
     def deserialize(serialized: dict):
@@ -296,7 +295,7 @@ class GenBlock(SimpleGenBlock):
 
     @staticmethod
     def prune(z, z_prior, variate_mask=None):
-        variate_mask = torch.Tensor(variate_mask)[None, :, None, None].cuda()
+        variate_mask = torch.Tensor(variate_mask)
         # Only used in inference mode to prune turned-off variates
         # Use posterior sample from meaningful variates, and prior sample from "turned-off" variates
         # The NLL should be similar to using z_post without masking if the mask is good (not very destructive)

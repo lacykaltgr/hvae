@@ -2,7 +2,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.TDVAE as params
+    import models.ConvTDVAE as params
 
     config = Hyperparams(
         log_params=params.log_params,
@@ -50,7 +50,7 @@ class Hyperparams:
 
     def to_json(self):
         from types import FunctionType
-        from data.textures.textures import TexturesDataset
+        from elements.dataset import _DataSet
 
         def convert_to_json_serializable(obj):
             if isinstance(obj, Hyperparams):
@@ -61,7 +61,7 @@ class Hyperparams:
                 return {key: convert_to_json_serializable(value) for key, value in obj.items()}
             if callable(obj) or isinstance(obj, FunctionType):
                 return str(obj)
-            if isinstance(obj, TexturesDataset):
+            if isinstance(obj, _DataSet):
                 return str(obj)
             return obj
 

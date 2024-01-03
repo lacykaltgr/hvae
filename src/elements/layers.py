@@ -48,18 +48,10 @@ class UnpooLayer(SerializableModule):
                nn.LeakyReLU(negative_slope=0.1),
                Interpolate(scale=self.strides)]
 
-        self.scale_bias: nn.Parameter | None = None
         self.ops = nn.Sequential(*ops)
-
-    def reset_parameters(self, inputs):
-        B, C, H, W = inputs.shape
-        self.scale_bias = nn.Parameter(torch.zeros(size=(1, C, H, W), device='cpu'), requires_grad=True)
 
     def forward(self, x):
         x = self.ops(x)
-        if self.scale_bias is None:
-            self.reset_parameters(x)
-        x = x + self.scale_bias
         return x
 
     def serialize(self):
@@ -69,13 +61,13 @@ class UnpooLayer(SerializableModule):
             filters=self.filters,
             strides=self.strides
         )
-        serialized["scale_bias"] = self.scale_bias
+        serialized["state_dict"] = self.state_dict()
         return serialized
 
     @staticmethod
     def deserialize(serialized):
         layer = UnpooLayer(**serialized["params"])
-        layer.scale_bias = serialized["scale_bias"]
+        layer.load_state_dict(serialized["state_dict"])
         return layer
 
     @staticmethod
@@ -114,11 +106,14 @@ class PoolLayer(SerializableModule):
             filters=self.filters,
             strides=self.strides
         )
+        serialized["state_dict"] = self.state_dict()
         return serialized
 
     @staticmethod
     def deserialize(serialized):
-        return PoolLayer(**serialized["params"])
+        layer = PoolLayer(**serialized["params"])
+        layer.load_state_dict(serialized["state_dict"])
+        return layer
 
     @staticmethod
     def from_hparams(hparams):

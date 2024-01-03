@@ -1,47 +1,42 @@
-from collections import OrderedDict
+from src.utils import OrderedModuleDict
 
 
 def _model():
     from src.hvae.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Unflatten
+    from src.elements.layers import FixedStdDev
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(),
         hiddens=SimpleBlock(
-            net=x_to_hiddens_net,
+            net=[x_to_hiddens_0, x_to_hiddens_1],
             input_id="x"
         ),
         y=GenBlock(
             prior_net=None,
-            posterior_net=hiddens_to_y_net,
-            concat_posterior=False,
+            posterior_net=hiddens_to_y,
             input_id="y_prior",
             condition="hiddens",
-            output_distribution="laplace"
-        ),
-        y_concat=SimpleBlock(
-            net=y_to_concat_net,
-            input_id="y",
+            output_distribution="normal"
         ),
         z=GenBlock(
-            prior_net=z_prior_net,
-            posterior_net=z_posterior_net,
-            input_id=["y", y_to_concat_net],
-            condition=[("hiddens", "y"), "concat"],
-            output_distribution="normal",
-            concat_posterior=True,
+            prior_net=z_prior,
+            posterior_net=z_posterior,
+            input_id="y",
+            condition="hiddens",
+            output_distribution="laplace",
+            fuse_prior="concat"
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape))],
+            net=[z_to_x_0, z_to_x_1, FixedStdDev(0.2)],
             input_id="z",
             output_distribution="normal"
         ),
     )
 
-    prior_shape = (1, 250)
-    _prior=OrderedDict(
-        y_prior=torch.cat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
+    prior_shape = (4, 10, 10)
+    _prior = OrderedDict(
+        y_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
     )
 
     __model = hvae(
@@ -64,27 +59,16 @@ LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    dir='experiments/',
     name='ConvTDVAE',
 
     # TRAIN LOG
     # --------------------
-    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
+    # Defines how often to save a model checkpoint and logs to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    load_from_train=None,
-    dir_naming_scheme='timestamp',
-
-
-    # EVAL
-    # --------------------
-    load_from_eval='path_to_directory/checkpoint.pth',
-
-
-    # SYNTHESIS
-    # --------------------
-    load_from_analysis='path_to_directory/checkpoint.pth',
+    load_from_train='csnl/ConvTDVAE/ConvTDVAE:v115',  # resume checkpoint (local or wandb path)
+    load_from_eval='csnl/ConvTDVAE/ConvTDVAE:v115',  # load checkpoint for evaluation (local or wandb path)
 )
 
 """
@@ -107,12 +91,6 @@ model_params = Hyperparams(
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-
-    # Num of mixtures in the MoL layer
-    num_output_mixtures=3,
-    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
-    # Look at section 6 of the Efficient-VDVAE paper.
-    min_mol_logscale=-250.,
 )
 
 """
@@ -129,8 +107,6 @@ data_params = Hyperparams(
 
     # Image metadata
     shape=(1, 40, 40),
-    # Image color depth in the dataset (bit-depth of each color channel)
-    num_bits=8.,
 )
 
 """
@@ -163,14 +139,14 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=.05e-3
-    ,
+    learning_rate=1e-4,
+
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
     epsilon=1e-8,
     # L2 weight decay
-    l2_weight=0e-6,
+    l2_weight=1e-6,
 
     # noam/constant/cosine warmup (not much of an effect, done in VDVAE)
     warmup_steps=100.,
@@ -246,14 +222,12 @@ eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
     n_samples_for_validation=5000,
+    n_samples_for_reconstruction=3,
+
     # validation batch size
     batch_size=128,
 
     use_mean=True,
-
-    # Threshold used to mark latent groups as "active".
-    # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
 )
 
 """
@@ -263,26 +237,12 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei',
     ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
-
-    # Latent traversal mode
-    # --------------------
-    reconstruction=Hyperparams(
-        n_samples_for_reconstruction=3,
-        # The quantile at which to prune the latent space
-        # Example:
-        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-        # suitable value of variate_masks_quantile before running encoding mode.
-        mask_reconstruction=False,
-        variate_masks_quantile=0.03,
-    ),
 
     # Latent traversal mode
     # --------------------
@@ -321,16 +281,6 @@ analysis_params = Hyperparams(
         )
     ),
 
-
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
-    ),
-
     # Decodability mode
     # --------------------
 
@@ -363,54 +313,6 @@ analysis_params = Hyperparams(
     )
 )
 
-"""
---------------------
-BLOCK HYPERPARAMETERS
---------------------
-"""
-import torch
-# These are the default parameters,
-# use this for reference when creating custom blocks.
-
-mlp_params = Hyperparams(
-    type='mlp',
-    input_size=1000,
-    hidden_sizes=[],
-    output_size=1000,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True
-)
-
-cnn_params = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=1.,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
-)
-
-pool_params = Hyperparams(
-    type='pool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-unpool_params = Hyperparams(
-    type='unpool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
 
 """
 --------------------
@@ -418,67 +320,81 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_size = torch.prod(torch.tensor(data_params.shape))
-z_size = 1800
-hiddens_size = 2000
-y_size = 250
+import torch
+x_size = (1, 40, 40)
+hiddens_size = (40, 10, 10)
+y_size = (4, 10, 10)
+z_size = (40, 10, 10)
 
-x_to_hiddens_net = Hyperparams(
-    type='mlp',
-    input_size=x_size,
-    hidden_sizes=[],
-    output_size=hiddens_size,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True,
+x_to_hiddens_0 = Hyperparams(
+    type='pool',
+    in_filters=1,
+    filters=20,
+    strides=2,
 )
 
-hiddens_to_y_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[1000, 500],
-    output_size=2*y_size,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True,
+x_to_hiddens_1 = Hyperparams(
+    type='pool',
+    in_filters=20,
+    filters=40,
+    strides=2,
 )
 
-y_to_concat_net = Hyperparams(
-    type='mlp',
-    input_size=y_size,
-    hidden_sizes=[500, 1000],
-    output_size=hiddens_size,
+hiddens_to_y = Hyperparams(
+    type="conv",
+    n_layers=1,
+    in_filters=40,
+    bottleneck_ratio=2*0.1,
+    output_ratio=2*0.1,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-z_prior_net = Hyperparams(
-    type='mlp',
-    input_size=hiddens_size,
-    hidden_sizes=[2000],
-    output_size=2*z_size,
+z_prior = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=4,
+    bottleneck_ratio=2*10,
+    output_ratio=2*10,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-z_posterior_net = Hyperparams(
-    type='mlp',
-    input_size=2*hiddens_size,
-    hidden_sizes=[],
-    output_size=2*z_size,
+z_posterior = Hyperparams(
+    type="conv",
+    n_layers=0,
+    in_filters=120,
+    bottleneck_ratio=2/3,
+    output_ratio=2/3,
+    kernel_size=3,
+    use_1x1=False,
+    init_scaler=1.,
+    pool_strides=False,
+    unpool_strides=False,
     activation=torch.nn.ReLU(),
     residual=False,
-    activate_output=True,
 )
 
-z_to_x_net = Hyperparams(
-    type='mlp',
-    input_size=z_size,
-    hidden_sizes=[],
-    output_size=2*x_size,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True,
+z_to_x_0 = Hyperparams(
+    type='unpool',
+    in_filters=40,
+    filters=10,
+    strides=2,
+)
+
+z_to_x_1 = Hyperparams(
+    type='unpool',
+    in_filters=10,
+    filters=1,
+    strides=2,
 )
