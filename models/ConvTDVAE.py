@@ -35,7 +35,7 @@ def _model():
     )
 
     prior_shape = (4, 10, 10)
-    _prior = OrderedDict(
+    _prior = dict(
         y_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
     )
 
@@ -67,7 +67,7 @@ log_params = Hyperparams(
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    load_from_train='csnl/ConvTDVAE/ConvTDVAE:v115',  # resume checkpoint (local or wandb path)
+    load_from_train=None,  # resume checkpoint (local or wandb path)
     load_from_eval='csnl/ConvTDVAE/ConvTDVAE:v115',  # load checkpoint for evaluation (local or wandb path)
 )
 

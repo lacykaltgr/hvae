@@ -47,7 +47,7 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
     global_variational_prior_losses = []
     avg_global_var_prior_losses = []
     for block_name, dists in distributions.items():
-        if block_name == 'output' or dists is None or len(dists) != 2:
+        if block_name == 'output' or dists is None or len(dists) != 2 or dists[1] is None:
             continue
         prior, posterior = dists
         loss, avg_loss = kl_divergence(prior, posterior)

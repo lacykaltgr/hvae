@@ -96,7 +96,7 @@ class hVAE(nn.Module):
 
     def serialize(self):
         blocks = list()
-        for block in self.encoder.blocks.values():
+        for block in self.blocks.values():
             serialized = block.serialize()
             blocks.append(serialized)
         serialized = dict(
