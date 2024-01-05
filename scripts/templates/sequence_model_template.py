@@ -1,19 +1,21 @@
 from src.utils import OrderedModuleDict
+import torch
 
 
 def _model():
-    from src.hvae.block import InputBlock, GenBlock, OutputBlock
-    from src.hvae.hvae import hVAE as hvae
+    from src.hvae.block import GenBlock, InputBlock, OutputBlock
+    from src.hvae.sequence import hSequenceVAE
     from src.elements.layers import FixedStdDev
 
     _blocks = OrderedModuleDict(
         x=InputBlock(),
         z=GenBlock(
-            prior_net=z_prior,
+            prior_net=z_recurrence,
             posterior_net=z_posterior,
-            input_id="z_prior",
+            input_id="_z",
             condition="x",
-            output_distribution="laplace"
+            output_distribution="normal",
+            fuse_prior="concat"
         ),
         x_hat=OutputBlock(
             net=[z_to_x, FixedStdDev(0.4)],
@@ -22,14 +24,13 @@ def _model():
         ),
     )
 
-    prior_shape = (400, )
-    _prior = dict(
-        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
+    _init = dict(
+        _z=torch.zeros(size=(40, 10, 10)),
     )
 
-    __model = hvae(
+    __model = hSequenceVAE(
         blocks=_blocks,
-        init=_prior
+        init=_init,
     )
 
     return __model
@@ -40,23 +41,22 @@ def _model():
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
-
 """
 --------------------
 LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    name='YOUR_MODEL_NAME',
+    name='SMT-VAE',
 
     # TRAIN LOG
     # --------------------
-    # Defines how often to save a model checkpoint and logs to disk.
+    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    load_from_train=None,  # resume checkpoint (local or wandb path)
-    load_from_eval='path/to/checkpoint',  # load checkpoint for evaluation (local or wandb path)
+    load_from_train=None,
+    load_from_eval='path_to_directory/checkpoint.pth',
 )
 
 """
@@ -78,7 +78,7 @@ model_params = Hyperparams(
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
-    gradient_smoothing_beta=0.6931472,
+    gradient_smoothing_beta=0.6931472
 )
 
 """
@@ -86,15 +86,15 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.mnist import MNISTDataSet
+
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=MNISTDataSet,
+    dataset='Your Dataset Class',
     params=dict(),
 
     # Image metadata
-    shape=(1, 32, 32),
+    shape=(5, 1, 40, 40),
 )
 
 """
@@ -127,14 +127,14 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=5e-4,
-
+    learning_rate=5e-4
+    ,
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
     epsilon=1e-8,
     # L2 weight decay
-    l2_weight=1e-6,
+    l2_weight=0e-6,
 
     # noam/constant/cosine warmup (not much of an effect, done in VDVAE)
     warmup_steps=100.,
@@ -149,7 +149,6 @@ optimizer_params = Hyperparams(
     # exponential only
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
-
 
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
@@ -183,8 +182,8 @@ loss_params = Hyperparams(
     variation_schedule='Linear',
 
     # linear beta schedule
-    vae_beta_anneal_start=1000,
-    vae_beta_anneal_steps=10_000,
+    vae_beta_anneal_start=21,
+    vae_beta_anneal_steps=5000,
     vae_beta_min=1e-4,
 
     # logistic beta schedule
@@ -225,12 +224,26 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei',
+    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei', 'gabor'
     ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
+
+    # Latent traversal mode
+    # --------------------
+    reconstruction=Hyperparams(
+        n_samples_for_reconstruction=3,
+        # The quantile at which to prune the latent space
+        # Example:
+        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
+        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
+        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
+        # suitable value of variate_masks_quantile before running encoding mode.
+        mask_reconstruction=False,
+        variate_masks_quantile=0.03,
+    ),
 
     # Latent traversal mode
     # --------------------
@@ -267,6 +280,15 @@ analysis_params = Hyperparams(
     gabor=Hyperparams(
         queries=dict(
         )
+    ),
+
+    # Div_stats mode
+    # --------------------
+    div_stats=Hyperparams(
+        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
+        # reconstruction and encoding). Set to 1. to use the full training dataset.
+        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
+        div_stats_subset_ratio=0.2
     ),
 
     # Decodability mode
@@ -308,26 +330,23 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-import torch
-
-
-z_prior = Hyperparams(
+z_recurrence = Hyperparams(
     type="conv",
-    in_filters=1,
-    filters=[5, 5],
+    in_filters=4,
+    filters=[10, 40, 80],
     kernel_size=3,
-    pool_strides=1,
+    pool_strides=0,
     unpool_strides=0,
     activation=torch.nn.Softplus(),
-    activate_output=True
+    activate_output=False
 )
 
 z_posterior = Hyperparams(
     type="conv",
-    in_filters=5,
-    filters=[8, 8],
+    in_filters=160,
+    filters=[160, 120, 80],
     kernel_size=3,
-    pool_strides=1,
+    pool_strides=0,
     unpool_strides=0,
     activation=torch.nn.Softplus(),
     activate_output=False
@@ -335,13 +354,11 @@ z_posterior = Hyperparams(
 
 z_to_x = Hyperparams(
     type="conv",
-    in_filters=5,
-    filters=[3, 1],
+    in_filters=40,
+    filters=[40, 10, 4, 1],
     kernel_size=3,
     pool_strides=0,
-    unpool_strides=1,
+    unpool_strides=2,
     activation=torch.nn.Softplus(),
     activate_output=False
 )
-
-

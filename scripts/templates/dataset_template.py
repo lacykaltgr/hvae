@@ -1,5 +1,6 @@
 from src.elements.dataset import _DataSet
 
+
 class YOURDATASETNAME(_DataSet):
     def __init__(self):
         super(YOURDATASETNAME).__init__()

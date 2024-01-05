@@ -14,6 +14,14 @@ docker compose up
 A JupyterLab server will be created automatically. 
 You can access this at **localhost:8880**.
 
+**Weight and Biases**
+
+This repository uses [Weights and Biases](https://wandb.ai/site) for logging and visualization.
+To use this, you need to create a free account on their website and login to the CLI.
+```bash
+wandb login <your_api_key>
+```
+
 ## Project Structure
 
 ```
@@ -23,7 +31,7 @@ You can access this at **localhost:8880**.
 ├── experiments                     # Model checkpoints, analysis results
 ├── migration                       # Migration scripts
 ├── models                          # Model definitions
-├── scripts                         # Executable scripts
+├── scripts                         # Python scripts to create files
 │   ├── templates                   # Model, dataset templates
 ├── src
 │   ├── elements
@@ -58,7 +66,7 @@ To create your model, you need to create a new file in the `models` directory. T
 1. Copy the `scripts/templates/model_template.py` file and rename it to your desired model name.
 2. Use the `create_model.py` script in the `scripts` directory. 
     ```bash
-    python scripts/create_model.py --name my_model
+    python scripts/create.py model <model_name>
     ```
     This script will create a new model file with the given name.
 
@@ -66,9 +74,10 @@ The model file has the following structure:
 ```python
 def _model():
     from src.hvae.hvae import hVAE as hvae
+    from src.utils import OrderedModuleDict
     # block imports
     
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
        # block definitions
     )
     __model = hvae(
@@ -114,12 +123,13 @@ Every block must be inherited from the base `_Block` class in `src.hvae.block`.
 
 - The first block in the dictionary must be an `InputBlock`. This block initializes the computation graph.
 In the `net` parameter of the `InputBlock` preprocessing transformations (e.g. flattening) can be applied.
-- The Encoder and the Generator networks of the model are seperated via special bottleneck blocks called the `TopSimpleBlock` and the `TopGenBlock`.
+- The seperation between the Encoder and the Generator networks of the model is automatically detected at the first *GenBlock*.
 One of these blocks must be defined in the dictionary.
 - The last block in the dictionary must be an `OutputBlock`. 
 
 To describe the connections between blocks just use the name of the blocks as inputs in the `input_id` parameter of the block.
-The same applies to the `condition` parameter in generative blocks.   
+The same applies to the `condition` parameter in generative blocks.  
+*TODO: inputpipeline*  
 The `net` parameter of the blocks describes a transformation that is applied to the input. 
 You can pass any transformation here just make sure it is wrapped by the `SerializableModule` class for serialization.
 For ease of use, some common neural networks are already implemented in `src.hvae.nets`. 
@@ -138,11 +148,6 @@ These can also be defined with configuration dictionaries (check out `mlp_params
 - `net`: Transformation applied to the input.
 - `input_id`: Name of the input block.
 - `output_distribution`: Type of the returned distribution.
-
-**ConcatBlock**
-- Concatenates the inputs along a given dimension.
-- `input_ids`: Names of the 2 input blocks.
-- `dim`: Dimension along which the inputs are concatenated.
 
 **SimpleBlock**
 - Applies a transformation on its input.
