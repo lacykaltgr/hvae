@@ -3,13 +3,21 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from torch import tensor
-from tqdm import tqdm
 
-from src.utils import NumpyEncoder, get_variate_masks
+from src.utils import NumpyEncoder
 from src.hparams import get_hparams
 from torch.utils.data import Dataset, DataLoader
-from src.hvae.model import reconstruct, device, kl_divergence
+
+
+def model_summary(net):
+    """
+    Print the model summary
+    :param net: nn.Module, the network
+    :return: None
+    """
+    from torchinfo import summary
+    shape = (1,) + get_hparams().data_params.shape
+    return summary(net, input_size=shape, depth=7)
 
 
 class Decodability_dataset(Dataset):
@@ -144,17 +152,6 @@ def white_noise_analysis(model, target_block, save_path, shape, n_samples=100, s
     np.save(os.path.join(wna_path, f"{target_block}_reverse_correlation.npy"), receptive_fields)
     fig.savefig(os.path.join(wna_path, f"{target_block}_reverse_correlation.png"), facecolor="white")
 
-
-
-def model_summary(net):
-    """
-    Print the model summary
-    :param net: nn.Module, the network
-    :return: None
-    """
-    from torchinfo import summary
-    shape = (1,) + get_hparams().data_params.shape
-    return summary(net, input_size=shape, depth=7)
 
 
 def generate_mei(model, target_block, query_config):

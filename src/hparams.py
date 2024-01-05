@@ -2,7 +2,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.ContrastVAE as params
+    import models.SMTVAE as params
 
     config = Hyperparams(
         log_params=params.log_params,

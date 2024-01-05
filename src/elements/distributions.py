@@ -178,7 +178,7 @@ class ConcatenatedDistribution(dist.distribution.Distribution):
     @property
     def mean(self) -> torch.Tensor:
         means = [d.mean for d in self.distributions]
-        means = torch.stack(means, dim=0)
+        means = torch.stack(means, dim=1)
         return means
 
     @property

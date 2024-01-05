@@ -1,78 +1,51 @@
-from src.utils import SerializableModule, OrderedModuleDict
-import torch
+from src.utils import OrderedModuleDict
 
 
 def _model():
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
-    from src.hvae.sequence import hSequenceVAE
-    from src.elements.layers import Conv2d, Slice, FixedStdDev
-    from src.utils import SharedSerializableSequential as Shared
-
-    shared_net = Shared(Conv2d(40, 4, 3, 1, 'SAME'))
+    from src.hvae.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
+    from src.hvae.hvae import hVAE as hvae
+    from src.elements.layers import FixedStdDev, Flatten, Unflatten
 
     _blocks = OrderedModuleDict(
         x=InputBlock(),
-            sparse_mu_sigma=SimpleBlock(
-                net=x_to_sparse,
-                input_id="x",
-            ),
-            h_manifold=SimpleBlock(
-                net=[Slice(40), shared_net],
-                input_id="sparse_mu_sigma",
-            ),
-        h=GenBlock(
-            prior_net=FixedStdDev(0.2),
-            posterior_net=ProductOfExperts(),
-            input_id="_h",
-            condition=[("h_manifold", "_h_manifold"), "substract", FixedStdDev(0.4)],
-            output_distribution="normal",
-            fuse_prior="concat"
+        hiddens=SimpleBlock(
+            net=x_to_hiddens,
+            input_id="x"
+        ),
+        y=GenBlock(
+            prior_net=None,
+            posterior_net=[hiddens_to_y, Flatten(start_dim=1), y_linear],
+            input_id="y_prior",
+            condition="hiddens",
+            output_distribution="normal"
         ),
         z=GenBlock(
-            prior_net=manifold_recon,
+            prior_net=[z_prior_linear, Unflatten(1, (2, 8, 8)), z_prior],
             posterior_net=z_posterior,
-            input_id=[("_z_manifold", "h"), "add"],
-            condition="sparse_mu_sigma",
-            output_distribution="laplace",
-            fuse_prior="concat",
+            input_id="y",
+            condition=[("hiddens",
+                        ["y", y_concat_linear, Unflatten(1, (2, 8, 8)), y_concat]),
+                       "concat"],
+            output_distribution="laplace"
         ),
-            z_manifold=SimpleBlock(
-                net=shared_net,
-                input_id="z",
-            ),
         x_hat=OutputBlock(
-            net=[z_to_x, FixedStdDev(0.4)],
+            net=[z_to_x, FixedStdDev(0.1)],
             input_id="z",
             output_distribution="normal"
         ),
     )
 
-    _init = dict(
-        _h_manifold=torch.zeros(size=(4, 10, 10)),
-        _h=torch.zeros(size=(4, 10, 10)),
-        _z=torch.zeros(size=(40, 10, 10)),
-        _z_manifold=torch.zeros(size=(4, 10, 10)),
+    prior_shape = (256, )
+    _prior = dict(
+        y_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
     )
 
-    __model = hSequenceVAE(
+    __model = hvae(
         blocks=_blocks,
-        init=_init,
+        init=_prior
     )
 
     return __model
-
-
-class ProductOfExperts(SerializableModule):
-    def __init__(self):
-        super(ProductOfExperts, self).__init__()
-
-    def forward(self, x):
-        mu_0, sigma_0, mu_1, sigma_1 = x.chunk(4, dim=1)
-        MU_num = mu_0 * sigma_1 ** -2 + mu_1 * sigma_0 ** -2
-        MU_den = sigma_0 ** -2 + sigma_1 ** -2
-        MU = MU_num / MU_den
-        SIGMA = MU_den ** -1
-        return torch.cat([MU, SIGMA], dim=1)
 
 
 # --------------------------------------------------
@@ -80,22 +53,23 @@ class ProductOfExperts(SerializableModule):
 # --------------------------------------------------
 from src.hparams import Hyperparams
 
+
 """
 --------------------
 LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    name='SMT-VAE',
+    name='ConvTDVAE_mnist',
 
     # TRAIN LOG
     # --------------------
-    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
+    # Defines how often to save a model checkpoint and logs to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
-    load_from_train=None,
-    load_from_eval='path_to_directory/checkpoint.pth',
+    load_from_train=None,  # resume checkpoint (local or wandb path)
+    load_from_eval='csnl/ConvTDVAE_mnist/ConvTDVAE_mnist:v103',  # load checkpoint for evaluation (local or wandb path)
 )
 
 """
@@ -117,7 +91,7 @@ model_params = Hyperparams(
 
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
-    gradient_smoothing_beta=0.6931472
+    gradient_smoothing_beta=0.6931472,
 )
 
 """
@@ -125,16 +99,15 @@ model_params = Hyperparams(
 DATA HYPERPARAMETERS
 --------------------
 """
-from data.forest_walk.forest_walk import ForestVideoDataset
-
+from data.mnist import MNISTDataSet
 data_params = Hyperparams(
     # Dataset source.
     # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
-    dataset=ForestVideoDataset,
-    params=dict(seq_len=5, n_frames=25600, frame_rate=2, patch_size=40, whiten=False, n_downsamples=2),
+    dataset=MNISTDataSet,
+    params=dict(),
 
     # Image metadata
-    shape=(5, 1, 40, 40),
+    shape=(1, 32, 32),
 )
 
 """
@@ -144,7 +117,7 @@ TRAINING HYPERPARAMETERS
 """
 train_params = Hyperparams(
     # The total number of training updates
-    total_train_steps=10_000,
+    total_train_steps=100_000,
     # training batch size
     batch_size=128,
 
@@ -167,14 +140,14 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=5e-4
-    ,
+    learning_rate=1e-2,
+
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
     epsilon=1e-8,
     # L2 weight decay
-    l2_weight=0e-6,
+    l2_weight=1e-6,
 
     # noam/constant/cosine warmup (not much of an effect, done in VDVAE)
     warmup_steps=100.,
@@ -189,6 +162,7 @@ optimizer_params = Hyperparams(
     # exponential only
     #   Defines the decay rate of the exponential learning rate decay
     decay_rate=0.5,
+
 
     # Gradient
     #  clip_norm value should be defined for nats/dim loss.
@@ -222,8 +196,8 @@ loss_params = Hyperparams(
     variation_schedule='Linear',
 
     # linear beta schedule
-    vae_beta_anneal_start=21,
-    vae_beta_anneal_steps=5000,
+    vae_beta_anneal_start=20,
+    vae_beta_anneal_steps=1000,
     vae_beta_min=1e-4,
 
     # logistic beta schedule
@@ -264,26 +238,12 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
+    # in development: 'mei',
     ops=['reconstruction'],
 
     # inference batch size (all modes)
     batch_size=32,
-
-    # Latent traversal mode
-    # --------------------
-    reconstruction=Hyperparams(
-        n_samples_for_reconstruction=3,
-        # The quantile at which to prune the latent space
-        # Example:
-        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-        # suitable value of variate_masks_quantile before running encoding mode.
-        mask_reconstruction=False,
-        variate_masks_quantile=0.03,
-    ),
 
     # Latent traversal mode
     # --------------------
@@ -320,15 +280,6 @@ analysis_params = Hyperparams(
     gabor=Hyperparams(
         queries=dict(
         )
-    ),
-
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
     ),
 
     # Decodability mode
@@ -370,46 +321,108 @@ CUSTOM BLOCK HYPERPARAMETERS
 --------------------
 """
 # add your custom block hyperparameters here
-x_to_sparse = Hyperparams(
+import torch
+x_size = (1, 32, 32)
+hiddens_size = (5, 16, 16)
+y_size = (2, 8, 8)
+z_size = (5, 16, 16)
+
+
+x_to_hiddens = Hyperparams(
     type="conv",
     in_filters=1,
-    filters=[10, 40, 80],
+    filters=[5, 5],
     kernel_size=3,
-    pool_strides=2,
+    pool_strides=1,
     unpool_strides=0,
+    activation=torch.nn.LeakyReLU(negative_slope=0.1),
+    activate_output=True
+)
+
+hiddens_to_y = Hyperparams(
+    type="conv",
+    in_filters=5,
+    filters=[4, 4],
+    kernel_size=3,
+    pool_strides=1,
+    unpool_strides=0,
+    activation=torch.nn.LeakyReLU(negative_slope=0.1),
+    activate_output=False
+)
+
+y_linear = Hyperparams(
+    type='mlp',
+    input_size=256,
+    hidden_sizes=[256],
+    output_size=512,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=False
+)
+
+y_concat_linear = Hyperparams(
+    type='mlp',
+    input_size=400,
+    hidden_sizes=[500],
+    output_size=400,
+    activation=torch.nn.Softplus(),
+    residual=False,
+    activate_output=True
+)
+
+y_concat = Hyperparams(
+    type="conv",
+    in_filters=4,
+    filters=[5, 5],
+    kernel_size=3,
+    pool_strides=0,
+    unpool_strides=1,
     activation=torch.nn.Softplus(),
     activate_output=False
 )
 
-manifold_recon = Hyperparams(
+z_prior_linear = Hyperparams(
+    type='mlp',
+    input_size=256,
+    hidden_sizes=[256],
+    output_size=128,
+    activation=torch.nn.ReLU(),
+    residual=False,
+    activate_output=True
+)
+
+z_prior = Hyperparams(
     type="conv",
-    in_filters=4,
-    filters=[10, 40, 80],
+    in_filters=2,
+    filters=[10],
     kernel_size=3,
     pool_strides=0,
-    unpool_strides=0,
-    activation=torch.nn.Softplus(),
+    unpool_strides=1,
+    activation=torch.nn.LeakyReLU(negative_slope=0.1),
     activate_output=False
 )
 
 z_posterior = Hyperparams(
     type="conv",
-    in_filters=160,
-    filters=[160, 120, 80],
+    in_filters=15,
+    filters=[10, 10],
     kernel_size=3,
     pool_strides=0,
     unpool_strides=0,
-    activation=torch.nn.Softplus(),
+    activation=torch.nn.LeakyReLU(negative_slope=0.1),
     activate_output=False
 )
 
+
 z_to_x = Hyperparams(
     type="conv",
-    in_filters=40,
-    filters=[40, 10, 4, 1],
+    in_filters=5,
+    filters=[3, 1],
     kernel_size=3,
     pool_strides=0,
-    unpool_strides=2,
-    activation=torch.nn.Softplus(),
+    unpool_strides=1,
+    activation=torch.nn.LeakyReLU(negative_slope=0.1),
     activate_output=False
 )
+
+

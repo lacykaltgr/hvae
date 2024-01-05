@@ -32,21 +32,25 @@ class Interpolate(SerializableModule):
         return Interpolate(**serialized["params"])
 
 
-class UnpooLayer(SerializableModule):
-    def __init__(self, in_filters, filters, strides):
-        super(UnpooLayer, self).__init__()
+class UnPooLayer(SerializableModule):
+    def __init__(self, in_filters, filters, strides, activation=None):
+        super(UnPooLayer, self).__init__()
         self.in_filters = in_filters
         self.filters = filters
+
+        self.activation = activation if activation is not None \
+            else nn.LeakyReLU(negative_slope=0.1)
 
         if isinstance(strides, int):
             self.strides = (strides, strides)
         else:
             self.strides = strides
 
-        ops = [Conv2d(in_channels=in_filters, out_channels=filters, kernel_size=(1, 1), stride=(1, 1),
-                      padding='same'),
-               nn.LeakyReLU(negative_slope=0.1),
-               Interpolate(scale=self.strides)]
+        ops = [nn.UpsamplingNearest2d(scale_factor=self.strides),
+               Conv2d(in_channels=in_filters, out_channels=filters,
+                      kernel_size=(1, 1), stride=(1, 1), padding='same'),
+               nn.BatchNorm2d(filters),
+               self.activation]
 
         self.ops = nn.Sequential(*ops)
 
@@ -66,13 +70,13 @@ class UnpooLayer(SerializableModule):
 
     @staticmethod
     def deserialize(serialized):
-        layer = UnpooLayer(**serialized["params"])
+        layer = UnPooLayer(**serialized["params"])
         layer.load_state_dict(serialized["state_dict"])
         return layer
 
     @staticmethod
     def from_hparams(hparams):
-        return UnpooLayer(
+        return UnPooLayer(
             in_filters=hparams.in_filters,
             filters=hparams.filters,
             strides=hparams.strides
@@ -80,18 +84,22 @@ class UnpooLayer(SerializableModule):
 
 
 class PoolLayer(SerializableModule):
-    def __init__(self, in_filters, filters, strides):
+    def __init__(self, in_filters, filters, strides, activation=None):
         super(PoolLayer, self).__init__()
         self.in_filters = in_filters
         self.filters = filters
         self.strides = strides
+
+        self.activation = activation if activation is not None \
+            else nn.LeakyReLU(negative_slope=0.1)
 
         if isinstance(strides, int):
             strides = (strides, strides)
 
         ops = [Conv2d(in_channels=in_filters, out_channels=filters,
                       kernel_size=strides, stride=strides, padding='same'),
-               nn.LeakyReLU(negative_slope=0.1)]
+               nn.BatchNorm2d(filters),
+               self.activation]
 
         self.ops = nn.Sequential(*ops)
 

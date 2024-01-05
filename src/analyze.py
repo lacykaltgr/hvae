@@ -1,3 +1,5 @@
+raise NotImplementedError('This file is not ready for use')
+
 import os
 import logging
 
@@ -9,7 +11,6 @@ from src.hvae.model import generate
 from src.hvae.analysis_tools import compute_per_dimension_divergence_stats, decodability, generate_mei, \
     get_optimal_gabor, latent_step_analysis, plot_reconstruction, white_noise_analysis
 from src.utils import setup_logger, load_experiment_for, wandb_init
-
 
 
 def generation_mode(model, save_path, logger: logging.Logger = None):
@@ -25,7 +26,6 @@ def generation_mode(model, save_path, logger: logging.Logger = None):
             write_image_to_disk(os.path.join(artifacts_folder, f'setup-{temp_i:01d}-image-{sample_i:04d}.png'),
                                 output.detach().cpu().numpy())
     logger.info(f'Generated Images saved to {artifacts_folder}')
-
 
 
 def decodability_mode(model, labeled_loader, save_path, logger: logging.Logger = None):

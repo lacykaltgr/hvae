@@ -33,7 +33,7 @@ def get_net(model) -> Sequential:
         elif model.type == 'pool':
             return Sequential(PoolLayer.from_hparams(model))
         elif model.type == 'unpool':
-            return Sequential(UnpooLayer.from_hparams(model))
+            return Sequential(UnPooLayer.from_hparams(model))
         else:
             raise NotImplementedError("Model type not supported.")
 
@@ -130,107 +130,77 @@ class ConvNet(SerializableModule):
     Parametric convolutional network
     based on Efficient-VDVAE paper
 
-    :param n_layers: int, the number of convolutional layers
     :param in_filters: int, the number of input filters
-    :param bottleneck_ratio: float, the ratio of bottleneck filters to input filters
+    :param filters: list of int, the number of filters for each layer
     :param kernel_size: int or tuple of int, the size of the convolutional kernel
-    :param init_scaler: float, the scaler for the initial weights_imagenet
-    :param residual: bool, whether to use residual connections
-    :param use_1x1: bool, whether to use 1x1 convolutions
     :param pool_strides: int or tuple of int, the strides for the pooling layers
     :param unpool_strides: int or tuple of int, the strides for the unpooling layers
-    :param output_ratio: float, the ratio of output filters to input filters
     :param activation: torch.nn.Module, the activation function to use
     """
-    def __init__(self, n_layers, in_filters, bottleneck_ratio, kernel_size, init_scaler
-                 , residual=True, use_1x1=True, pool_strides=0, unpool_strides=0, output_ratio=1.0, activation=nn.SiLU()):
+    def __init__(self, in_filters, filters, kernel_size, pool_strides=0, unpool_strides=0,
+                 activation=nn.LeakyReLU(), activate_output=False):
         super(ConvNet, self).__init__()
-        self.n_layers = n_layers
         self.in_filters = in_filters
-        self.residual = residual
-        self.bottleneck_ratio = bottleneck_ratio
+        self.filters = filters
         self.kernel_size = kernel_size
-        self.init_scaler = init_scaler
-        self.use_1x1 = use_1x1
+
+        assert pool_strides == 0 or unpool_strides == 0, \
+            "Cannot have both pooling and unpooling layers"
         self.pool_strides = pool_strides
         self.unpool_strides = unpool_strides
+
         self.activation = activation
-        self.output_ratio = output_ratio
+        self.activate_output = activate_output
+
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
 
-        if self.residual:
-            assert self.output_ratio == 1
-
-        output_filters = int(in_filters * output_ratio)
-        bottlneck_filters = int(in_filters * bottleneck_ratio)
-
         convs = []
-        if pool_strides > 0:
+        for i in range(self.pool_strides):
             convs.append(PoolLayer(
                 in_filters=in_filters,
-                filters=output_filters,
-                strides=pool_strides,
+                filters=in_filters,
+                strides=2,
+                activation=activation
             ))
 
-        convs += [nn.Conv2d(in_channels=in_filters,
-                            out_channels=bottlneck_filters,
-                            kernel_size=(1, 1) if use_1x1 else kernel_size,
-                            stride=(1, 1),
-                            padding='same')]
+        for i in range(self.unpool_strides):
+            convs.append(UnPooLayer(
+                in_filters=in_filters,
+                filters=in_filters,
+                strides=2,
+                activation=activation
+            ))
 
-        for _ in range(n_layers):
+        filters = [in_filters] + filters
+        for i in range(len(filters) - 1):
+            convs.append(nn.Conv2d(in_channels=filters[i],
+                                   out_channels=filters[i + 1],
+                                   kernel_size=kernel_size,
+                                   stride=(1, 1),
+                                   padding='same'))
+            convs.append(nn.BatchNorm2d(filters[i + 1]))
             convs.append(activation)
-            convs.append(Conv2d(in_channels=bottlneck_filters,
-                                out_channels=bottlneck_filters,
-                                kernel_size=kernel_size,
-                                stride=(1, 1),
-                                padding='same'))
-
-        convs += [activation,
-                  Conv2d(in_channels=bottlneck_filters,
-                         out_channels=output_filters,
-                         kernel_size=(1, 1) if use_1x1 else kernel_size,
-                         stride=(1, 1),
-                         padding='same')]
-
-        convs[-1].weight.data *= init_scaler
-
-        if unpool_strides > 0:
-            convs.append(UnpooLayer(
-                in_filters=output_filters,
-                filters=output_filters,
-                strides=unpool_strides,
-            ))
 
         self.convs = nn.Sequential(*convs)
-        self.activation = activation
 
     def forward(self, inputs):
         x = inputs
         x = self.convs(x)
-        if self.residual:
-            outputs = inputs + x
-        else:
-            outputs = x
-        if self.activation is not None:
-            outputs = self.activation(outputs)
-        return outputs
+        if self.activate_output is not None:
+            x = self.activation(x)
+        return x
 
     @staticmethod
     def from_hparams(hparams):
         return ConvNet(
-            n_layers=hparams.n_layers,
             in_filters=hparams.in_filters,
-            bottleneck_ratio=hparams.bottleneck_ratio,
-            output_ratio=hparams.output_ratio,
+            filters=hparams.filters,
             kernel_size=hparams.kernel_size,
-            init_scaler=hparams.init_scaler,
-            use_1x1=hparams.use_1x1,
             pool_strides=hparams.pool_strides,
             unpool_strides=hparams.unpool_strides,
             activation=hparams.activation,
-            residual=hparams.residual,
+            activate_output=hparams.activate_output
         )
 
     def serialize(self):
@@ -238,17 +208,13 @@ class ConvNet(SerializableModule):
             type=self.__class__,
             state_dict=self.state_dict(),
             params=dict(
-                n_layers=self.n_layers,
                 in_filters=self.in_filters,
-                bottleneck_ratio=self.bottleneck_ratio,
-                output_ratio=self.output_ratio,
+                filters=self.filters,
                 kernel_size=self.kernel_size,
-                init_scaler=self.init_scaler,
-                use_1x1=self.use_1x1,
                 pool_strides=self.pool_strides,
                 unpool_strides=self.unpool_strides,
                 activation=self.activation,
-                residual=self.residual,
+                activate_output=self.activate_output
             )
         )
 

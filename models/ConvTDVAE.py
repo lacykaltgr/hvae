@@ -4,37 +4,38 @@ from src.utils import OrderedModuleDict
 def _model():
     from src.hvae.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import FixedStdDev
+    from src.elements.layers import FixedStdDev, Flatten, Unflatten
 
     _blocks = OrderedModuleDict(
         x=InputBlock(),
         hiddens=SimpleBlock(
-            net=[x_to_hiddens_0, x_to_hiddens_1],
+            net=x_to_hiddens,
             input_id="x"
         ),
         y=GenBlock(
             prior_net=None,
-            posterior_net=hiddens_to_y,
+            posterior_net=[hiddens_to_y, Flatten(start_dim=1), y_linear],
             input_id="y_prior",
             condition="hiddens",
             output_distribution="normal"
         ),
         z=GenBlock(
-            prior_net=z_prior,
+            prior_net=[z_prior_linear, Unflatten(1, (4, 10, 10)), z_prior],
             posterior_net=z_posterior,
             input_id="y",
-            condition="hiddens",
-            output_distribution="laplace",
-            fuse_prior="concat"
+            condition=[("hiddens",
+                        ["y", y_concat_linear, Unflatten(1, (4, 10, 10)), y_concat]),
+                       "concat"],
+            output_distribution="laplace"
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_0, z_to_x_1, FixedStdDev(0.2)],
+            net=[z_to_x, FixedStdDev(0.4)],
             input_id="z",
             output_distribution="normal"
         ),
     )
 
-    prior_shape = (4, 10, 10)
+    prior_shape = (400, )
     _prior = dict(
         y_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
     )
@@ -68,7 +69,7 @@ log_params = Hyperparams(
     eval_interval_in_steps=150,
 
     load_from_train=None,  # resume checkpoint (local or wandb path)
-    load_from_eval='csnl/ConvTDVAE/ConvTDVAE:v115',  # load checkpoint for evaluation (local or wandb path)
+    load_from_eval='csnl/ConvTDVAE_mnist/ConvTDVAE_mnist:v103',  # load checkpoint for evaluation (local or wandb path)
 )
 
 """
@@ -116,7 +117,7 @@ TRAINING HYPERPARAMETERS
 """
 train_params = Hyperparams(
     # The total number of training updates
-    total_train_steps=640000,
+    total_train_steps=10_000,
     # training batch size
     batch_size=128,
 
@@ -139,7 +140,7 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=1e-4,
+    learning_rate=5e-4,
 
     # Adam/Radam/Adamax parameters
     beta1=0.9,
@@ -192,11 +193,11 @@ loss_params = Hyperparams(
     # but it's safe to use it to avoid posterior collapses as NVAE suggests.
     # lambda of variational prior loss
     # schedule can be in ('None', 'Logistic', 'Linear')
-    variation_schedule='None',
+    variation_schedule='Linear',
 
     # linear beta schedule
-    vae_beta_anneal_start=21,
-    vae_beta_anneal_steps=5000,
+    vae_beta_anneal_start=1000,
+    vae_beta_anneal_steps=10_000,
     vae_beta_min=1e-4,
 
     # logistic beta schedule
@@ -227,7 +228,7 @@ eval_params = Hyperparams(
     # validation batch size
     batch_size=128,
 
-    use_mean=True,
+    use_mean=False,
 )
 
 """
@@ -322,79 +323,106 @@ CUSTOM BLOCK HYPERPARAMETERS
 # add your custom block hyperparameters here
 import torch
 x_size = (1, 40, 40)
-hiddens_size = (40, 10, 10)
+hiddens_size = (5, 20, 20)
 y_size = (4, 10, 10)
-z_size = (40, 10, 10)
+z_size = (5, 20, 20)
 
-x_to_hiddens_0 = Hyperparams(
-    type='pool',
+
+x_to_hiddens = Hyperparams(
+    type="conv",
     in_filters=1,
-    filters=20,
-    strides=2,
-)
-
-x_to_hiddens_1 = Hyperparams(
-    type='pool',
-    in_filters=20,
-    filters=40,
-    strides=2,
+    filters=[5, 5],
+    kernel_size=3,
+    pool_strides=1,
+    unpool_strides=0,
+    activation=torch.nn.Softplus(),
+    activate_output=True
 )
 
 hiddens_to_y = Hyperparams(
     type="conv",
-    n_layers=1,
-    in_filters=40,
-    bottleneck_ratio=2*0.1,
-    output_ratio=2*0.1,
+    in_filters=5,
+    filters=[8, 8],
     kernel_size=3,
-    use_1x1=False,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=torch.nn.ReLU(),
+    pool_strides=1,
+    unpool_strides=0,
+    activation=torch.nn.Softplus(),
+    activate_output=False
+)
+
+y_linear = Hyperparams(
+    type='mlp',
+    input_size=800,
+    hidden_sizes=[800, 1000],
+    output_size=800,
+    activation=torch.nn.Softplus(),
     residual=False,
+    activate_output=False
+)
+
+y_concat_linear = Hyperparams(
+    type='mlp',
+    input_size=400,
+    hidden_sizes=[500],
+    output_size=400,
+    activation=torch.nn.Softplus(),
+    residual=False,
+    activate_output=True
+)
+
+y_concat = Hyperparams(
+    type="conv",
+    in_filters=4,
+    filters=[5, 5],
+    kernel_size=3,
+    pool_strides=0,
+    unpool_strides=1,
+    activation=torch.nn.Softplus(),
+    activate_output=False
+)
+
+z_prior_linear = Hyperparams(
+    type='mlp',
+    input_size=400,
+    hidden_sizes=[500],
+    output_size=400,
+    activation=torch.nn.Softplus(),
+    residual=False,
+    activate_output=True
 )
 
 z_prior = Hyperparams(
     type="conv",
-    n_layers=0,
     in_filters=4,
-    bottleneck_ratio=2*10,
-    output_ratio=2*10,
+    filters=[5, 10],
     kernel_size=3,
-    use_1x1=False,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=torch.nn.ReLU(),
-    residual=False,
+    pool_strides=0,
+    unpool_strides=1,
+    activation=torch.nn.Softplus(),
+    activate_output=False
 )
 
 z_posterior = Hyperparams(
     type="conv",
-    n_layers=0,
-    in_filters=120,
-    bottleneck_ratio=2/3,
-    output_ratio=2/3,
-    kernel_size=3,
-    use_1x1=False,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=torch.nn.ReLU(),
-    residual=False,
-)
-
-z_to_x_0 = Hyperparams(
-    type='unpool',
-    in_filters=40,
-    filters=10,
-    strides=2,
-)
-
-z_to_x_1 = Hyperparams(
-    type='unpool',
     in_filters=10,
-    filters=1,
-    strides=2,
+    filters=[10, 10],
+    kernel_size=3,
+    pool_strides=0,
+    unpool_strides=0,
+    activation=torch.nn.Softplus(),
+    activate_output=False
 )
+
+
+z_to_x = Hyperparams(
+    type="conv",
+    in_filters=5,
+    filters=[3, 1],
+    kernel_size=3,
+    pool_strides=0,
+    unpool_strides=1,
+    activation=torch.nn.Softplus(),
+    activate_output=False
+)
+
+

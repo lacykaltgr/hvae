@@ -7,7 +7,6 @@ from torch import tensor
 from torch.utils.data import DataLoader
 import wandb
 
-from src.hvae.block import GenBlock, OutputBlock, SimpleGenBlock
 from src.checkpoint import Checkpoint
 from src.hparams import get_hparams
 from src.elements.losses import StructureSimilarityIndexMap, get_reconstruction_loss, get_kl_loss
@@ -61,13 +60,13 @@ def compute_loss(targets: tensor, distributions: dict, logits: tensor = None, st
                             avg_global_var_prior_losses,
                             step_n=step_n)
     global_var_loss = kldiv_schedule(step_n) * global_variational_prior_loss  # beta
-    total_generator_loss = -feature_matching_loss + global_var_loss
+    elbo = feature_matching_loss - global_var_loss
 
     kl_div = torch.sum(global_variational_prior_losses) / np.log(2.)
     return dict(
-        elbo=total_generator_loss,
-        reconstruction_loss=feature_matching_loss,
-        avg_reconstruction_loss=avg_feature_matching_loss,
+        elbo=elbo,
+        reconstruction_loss=-feature_matching_loss,
+        avg_reconstruction_loss=-avg_feature_matching_loss,
         kl_div=kl_div,
         avg_var_prior_loss=torch.sum(torch.stack(avg_global_var_prior_losses)),
     )
@@ -140,7 +139,7 @@ def reconstruction_step(net, inputs: tensor, step_n=None, use_mean=False):
         return computed, distributions, results
 
 
-def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, logger: logging.Logger = None):
+def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, global_step=None, logger: logging.Logger = None):
     """
     Reconstruct the images from the given dataset
     based on Efficient-VDVAE paper
@@ -149,6 +148,7 @@ def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, logger
     :param dataset: DataLoader, the dataset
     :param wandb_run: wandb run object
     :param use_mean: use the mean of the distributions instead of sampling
+    :param global_step: int, the current step number
     :param logger: logging.Logger, the logger
     :return: list, the input/output pairs
     """
@@ -156,7 +156,7 @@ def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, logger
     # Evaluation
     n_samples_for_eval = prms.eval_params.n_samples_for_validation
     results, (original, output_samples, output_means) = \
-        evaluate(net, dataset, n_samples=n_samples_for_eval, use_mean=use_mean, logger=logger)
+        evaluate(net, dataset, n_samples=n_samples_for_eval, use_mean=use_mean, global_step=global_step, logger=logger)
 
 
     # Reconstruction
@@ -165,30 +165,10 @@ def reconstruct(net, dataset: DataLoader, wandb_run: wandb.run, use_mean, logger
         o = wandb.Image(original[i], caption=f'Original {i}')
         s = wandb.Image(output_samples[i], caption=f'Sample {i}')
         m = wandb.Image(output_means[i], caption=f'Mean {i}')
-        wandb_run.log({"reconstruction": [o, s, m]})
+        wandb_run.log({f"reconstruction_{i}": [o, s, m]}, step=global_step)
 
-    """
-    # Plot
-    row_titles = ["Original", "Sampled", "Mean"]
-    n = len(io_pairs)
-    m = len(row_titles)
-    fig, axes = plt.subplots(nrows=m, ncols=n, figsize=(12, 8))
-    for ax, row in zip(axes[:, 0], row_titles):
-        ax.set_title(row, size='large')
-    for j in range(n):
-        for i in range(m):
-            if io_pairs[i][j].shape[0] == 1:
-                io_pairs[i][j] = io_pairs[i][j][0]
-            image = io_pairs[i][j]
-            axes[j, i].imshow(image, interpolation='none', cmap='gray')
-            axes[j, i].axis('off')
-
-    fig.tight_layout()
-    fig.savefig(os.path.join(save_path, f"reconstruction.png"), facecolor="white")
-    
-    """
     test_table = wandb.Table(data=[list(prepare_for_log(results).values())], columns=list(results.keys()))
-    wandb_run.log({"test": test_table})
+    wandb_run.log({"test": test_table}, step=global_step)
 
     return results
 
@@ -220,17 +200,18 @@ def generate(net, logger: logging.Logger):
         logger.info(f'Generating for temperature setting {temp_i:01d}')
         if isinstance(temperature_setting, list):
             temperatures = temperature_setting
+
         elif isinstance(temperature_setting, float):
-            temperatures = [temperature_setting] * len(
-                list(filter(lambda x: isinstance(x, (GenBlock, OutputBlock, SimpleGenBlock)),
-                            net.generator.blocks)))
+            temperatures = [temperature_setting] * len(net.blocks)
+
         elif isinstance(temperature_setting, tuple):
-            # Fallback to function defined temperature. Function params are defined with 3 arguments in a tuple
+            # Fallback to function defined temperature.
+            # Function params are defined with 3 arguments in a tuple
             assert len(temperature_setting) == 3
-            down_blocks = list(filter(lambda x: isinstance(x, (GenBlock, OutputBlock, SimpleGenBlock)),
-                                      net.generator.blocks))
-            temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=len(down_blocks))
-            temperatures = [temp_fn(layer_i) for layer_i in range(len(down_blocks))]
+            down_blocks = len(net)
+            temp_fn = linear_temperature(*(temperature_setting[1:]), n_layers=down_blocks)
+            temperatures = [temp_fn(layer_i) for layer_i in range(down_blocks)]
+
         else:
             logger.error(f'Temperature Setting {temperature_setting} not interpretable!!')
             raise ValueError(f'Temperature Setting {temperature_setting} not interpretable!!')
@@ -239,8 +220,6 @@ def generate(net, logger: logging.Logger):
         for step in range(prms.analysis_params.generation.n_generation_batches):
             outputs = generation_step(net, temperatures=temperatures)
             temp_outputs.append(outputs)
-
-            logger.info(f'Step: {step:04d}')
         all_outputs.append(temp_outputs)
     return all_outputs
 
@@ -261,7 +240,8 @@ def train_step(net, optimizer, schedule, inputs, step_n):
     output_sample = computed['output']
     results = compute_loss(inputs, distributions, step_n=step_n)
 
-    results["elbo"].backward()
+    nelbo = -results["elbo"]
+    nelbo.backward()
 
     global_norm = gradient_clip(net)
     skip, gradient_skip_counter_delta = gradient_skip(global_norm)
@@ -341,8 +321,8 @@ def train(net,
                     f'Reconstruction Loss {train_results["reconstruction_loss"]:.4f} |'
                     f'KL Div {train_results["kl_div"]:.4f} |'
                     f'SSIM: {train_ssim}')
-                val_results, _ = evaluate(net, val_loader,
-                                          n_samples=prms.eval_params.n_samples_for_validation,
+                val_results = reconstruct(net, val_loader, wandb_run,
+                                          use_mean=prms.eval_params.use_mean,
                                           global_step=global_step, logger=logger)
                 val_results = prepare_for_log(val_results)
 
@@ -367,7 +347,6 @@ def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = Non
              use_mean=False, logger: logging.Logger = None) -> tuple:
     """
     Evaluate the network on the given dataset
-    based on Efficient-VDVAE paper
 
     :param net: hVAE, the network
     :param val_loader: DataLoader, the dataset
@@ -381,7 +360,6 @@ def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = Non
 
     val_step = 0
     global_results, original, output_samples, output_means = None, None, None, None
-
     for val_step, val_inputs in enumerate(val_loader):
         n_samples -= prms.eval_params.batch_size
         val_inputs = val_inputs.to(device, non_blocking=True)
@@ -412,7 +390,7 @@ def evaluate(net, val_loader: DataLoader, n_samples: int, global_step: int = Non
 
     global_results = {k: v / (val_step + 1) for k, v in global_results.items()}
     global_results["avg_elbo"] = global_results["elbo"]
-    global_results["elbo"] = global_results["kl_div"] + global_results["reconstruction_loss"]
+    global_results["elbo"] = -global_results["kl_div"] - global_results["reconstruction_loss"]
 
     log = logger.info if logger is not None else print
     log(

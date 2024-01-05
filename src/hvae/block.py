@@ -48,12 +48,27 @@ class InputPipeline(SerializableModule):
     """
     Helper class for preprocessing pipeline
     """
+
     def __init__(self, input_pipeline: str or tuple or list):
         super(InputPipeline, self).__init__()
-        self.inputs = input_pipeline
+        self.inputs = self.parse(input_pipeline)
 
     def forward(self, computed):
         return self._load(computed, self.inputs)
+
+    def parse(self, input_pipeline):
+        if isinstance(input_pipeline, str):
+            return input_pipeline
+        elif isinstance(input_pipeline, tuple):
+            return tuple([self.parse(i) for i in input_pipeline])
+        elif isinstance(input_pipeline, list):
+            return [self.parse(i) for i in input_pipeline]
+        elif isinstance(input_pipeline, (SerializableModule, Sequential)):
+            return input_pipeline
+        elif hasattr(input_pipeline, "config"):
+            return get_net(input_pipeline)
+        else:
+            raise ValueError(f"Unknown input pipeline element {input_pipeline}")
 
     def serialize(self):
         return self._serialize(self.inputs)
@@ -62,7 +77,7 @@ class InputPipeline(SerializableModule):
         if isinstance(item, str):
             return item
         elif isinstance(item, list):
-            return [i.serialize() if isinstance(i, SerializableModule)
+            return [i.serialize() if isinstance(i, (SerializableModule, Sequential))
                     else self._serialize(i) for i in item]
         elif isinstance(item, tuple):
             return tuple([self._serialize(i) for i in item])

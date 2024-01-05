@@ -9,7 +9,6 @@ from torch.nn import Sequential, Module, ModuleList
 
 from src.hparams import get_hparams
 
-
 """
 -------------------
 MODEL UTILS
@@ -307,13 +306,30 @@ SERIALIZATION UTILS
 """
 
 
-class SerializableSequential(Sequential):
+class SerializableModule(Module):
+
+    def __init__(self, *args):
+        super().__init__()
+
+    def serialize(self):
+        return dict(type=self.__class__)
+
+    @staticmethod
+    def deserialize(serialized):
+        return serialized["type"]
+
+
+class SerializableSequential(Sequential, SerializableModule):
 
     def __init__(self, *args):
         super().__init__(*args)
 
     def serialize(self):
-        return [layer.serialize() for layer in self._modules.values()]
+        serialized = dict(
+            type=self.__class__,
+            params=[layer.serialize() for layer in self._modules.values()]
+        )
+        return serialized
 
     @staticmethod
     def deserialize(serialized):
@@ -321,22 +337,9 @@ class SerializableSequential(Sequential):
             layer["type"].deserialize(layer)
             if isinstance(layer, dict)
             else SerializableSequential.deserialize(layer)
-            for layer in serialized
+            for layer in serialized["params"]
         ])
         return sequential
-
-
-class SerializableModule(Module):
-
-    def __init__(self):
-        super().__init__()
-
-    def serialize(self):
-        return dict(type=self.__class__, params=None)
-
-    @staticmethod
-    def deserialize(serialized):
-        return serialized["type"]
 
 
 class SharedSerializableSequential(SerializableSequential):

@@ -6,7 +6,7 @@ import torch
 from .read_hparams.hparams import HParams
 from src.utils import SerializableSequential as Sequential
 from src.elements.nets import ConvNet
-from src.elements.layers import PoolLayer, UnpooLayer, Conv2d
+from src.elements.layers import PoolLayer, UnPooLayer, Conv2d
 
 
 class EfficientVDVAEMigrationAgent:
@@ -448,7 +448,7 @@ class EfficientVDVAEMigrationAgent:
         assert not (first_block and last_block)
 
         if strides > 1:
-            unpool = UnpooLayer(in_filters, filters, strides)
+            unpool = UnPooLayer(in_filters, filters, strides)
             in_filters = filters
         else:
             unpool = None

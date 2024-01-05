@@ -357,12 +357,6 @@ class SSIM(nn.Module):
         return (luminance * contrast_structure).mean(dim=(-2, -1))
 
     def forward(self, targets, outputs):
-        if len(outputs.size()) == 5:
-            shape = targets.shape
-            new_channel = shape[1] * shape[2]
-            shape = [shape[0], new_channel, shape[3], shape[4]]
-            outputs = outputs.reshape(shape)
-            targets = targets.reshape(shape)
         ssim_per_channel = self._compute_one_channel_ssim(targets, outputs)
         return ssim_per_channel.mean(dim=-1)
 
@@ -384,9 +378,20 @@ class StructureSimilarityIndexMap(nn.Module):
         targets = targets * 127.5 + 127.5
         outputs = outputs * 127.5 + 127.5
         assert targets.size() == outputs.size()
+
+        if len(outputs.size()) == 4:
+            return self.calculate(targets, outputs, global_batch_size)
+        elif len(outputs.size()) == 5:
+            loss = 0
+            n = outputs.size()[1]
+            for i in range(n):
+                loss += self.calculate(targets[i], outputs[i], global_batch_size)
+            return loss / n
+
+    def calculate(self, targets, outputs, batch_size):
         per_example_ssim = self.ssim(targets, outputs)
         mean_axis = list(range(1, len(per_example_ssim.size())))
         per_example_ssim = torch.sum(per_example_ssim, dim=mean_axis)
 
-        loss = torch.sum(per_example_ssim) / global_batch_size
+        loss = torch.sum(per_example_ssim) / batch_size
         return loss
