@@ -10,21 +10,6 @@ from src.hparams import get_hparams
 from ..utils import scale_pixels
 
 
-def get_loss(type):
-    """
-    General loss function
-    :return: loss
-    """
-    if type == "bce":
-        return nn.BCELoss()
-    elif type == "mse":
-        return nn.MSELoss()
-    elif type == "l1":
-        return nn.L1Loss()
-    else:
-        raise ValueError(f'Unknown loss: {type}')
-
-
 def get_reconstruction_loss():
     """
     Get reconstruction loss based on hparams
@@ -44,7 +29,7 @@ def get_reconstruction_loss():
             gradient_smoothing_beta=params.model_params.gradient_smoothing_beta,
         )
     elif params.loss_params.reconstruction_loss == 'mse':
-        return nn.MSELoss()
+        return MSELoss(data_shape=params.data_params.shape)
     else:
         raise ValueError(f'Unknown reconstruction loss: {params.loss_params.reconstruction_loss}')
 
@@ -91,6 +76,39 @@ class LogProb(nn.Module):
         # divide by ln(2) to convert to bit range (for visualization purposes only)
         avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
         
+        return loss, avg_loss
+
+class MSELoss(nn.Module):
+
+    """
+    Log probability loss
+    based on original implementation of TDVAE
+    with extra functionality from Efficient-VDVAE paper
+
+    :param data_shape: shape of the data
+    """
+    def __init__(self, data_shape):
+        super(MSELoss, self).__init__()
+        self.data_shape = data_shape
+
+    def forward(self, targets, distribution: Distribution, global_batch_size=128):
+        targets = targets.reshape(distribution.batch_shape)
+        sample = distribution.sample()
+        mse = nn.functional.mse_loss(targets, sample)
+        log_p_x = torch.flatten(mse, start_dim=1)
+        mean_axis = list(range(1, len(log_p_x.size())))
+
+        # loss for batch
+        per_example_loss = torch.sum(log_p_x, dim=mean_axis)  # B
+        scalar = global_batch_size * np.prod(self.data_shape)
+        loss = torch.sum(per_example_loss) / scalar
+
+        # avg loss for image
+        avg_per_example_loss = per_example_loss / (
+            np.prod([log_p_x.size()[i] for i in mean_axis]))  # B
+        # divide by ln(2) to convert to bit range (for visualization purposes only)
+        avg_loss = torch.sum(avg_per_example_loss) / (global_batch_size * np.log(2))
+
         return loss, avg_loss
 
 
