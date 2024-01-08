@@ -78,8 +78,8 @@ class LogProb(nn.Module):
         
         return loss, avg_loss
 
-class MSELoss(nn.Module):
 
+class MSELoss(nn.Module):
     """
     Log probability loss
     based on original implementation of TDVAE
