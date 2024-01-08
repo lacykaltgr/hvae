@@ -1,11 +1,12 @@
-from collections import OrderedDict
+from src.utils import OrderedModuleDict
+
 
 def _model():
     from src.hvae.block import InputBlock, OutputBlock, GenBlock
     from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Unflatten, Flatten
+    from src.elements.layers import Unflatten, Flatten, FixedStdDev
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(
             net=Flatten(start_dim=1),
         ),
@@ -17,19 +18,16 @@ def _model():
             output_distribution="laplace",
         ),
         x_hat=OutputBlock(
-            net=[z_to_x_net, Unflatten(1, (2, *data_params.shape[1:]))],
+            net=[z_to_x_net, FixedStdDev(0.4), Unflatten(1, (2, *data_params.shape[1:]))],
             input_id="z",
-            output_distribution="laplace"
+            output_distribution="normal"
         ),
     )
 
-    prior_shape = (1, 250)
-    _prior = OrderedDict(
-        z_prior=torch.nn.Parameter(
-            torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1), requires_grad=True)
+    prior_shape = (500, )
+    _prior = dict(
+        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0)
     )
-
-
 
     __model = hvae(
         blocks=_blocks,
@@ -50,7 +48,6 @@ LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    dir='experiments/',
     name='LinearVAE',
 
     # TRAIN LOG
@@ -60,17 +57,7 @@ log_params = Hyperparams(
     eval_interval_in_steps=150,
 
     load_from_train=None,
-    dir_naming_scheme='timestamp',
-
-
-    # EVAL
-    # --------------------
     load_from_eval='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
-
-
-    # SYNTHESIS
-    # --------------------
-    load_from_analysis='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
 )
 
 """
@@ -93,12 +80,6 @@ model_params = Hyperparams(
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-
-    # Num of mixtures in the MoL layer
-    num_output_mixtures=3,
-    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
-    # Look at section 6 of the Efficient-VDVAE paper.
-    min_mol_logscale=-250.,
 )
 
 """
@@ -108,15 +89,11 @@ DATA HYPERPARAMETERS
 """
 from data.textures.textures import TexturesDataset
 data_params = Hyperparams(
-    # Dataset source.
-    # Can be one of ('mnist', 'cifar', 'imagenet', 'textures')
     dataset=TexturesDataset,
-    params=dict(type="natural", image_size=40, whitening="old"),
+    params=dict(type="natural", image_size=20, whitening="old"),
 
     # Image metadata
-    shape=(1, 40, 40),
-    # Image color depth in the dataset (bit-depth of each color channel)
-    num_bits=8.,
+    shape=(1, 20, 20),
 )
 
 """
@@ -232,14 +209,11 @@ eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
     n_samples_for_validation=5000,
+    n_samples_for_reconstruction=3,
+
     # validation batch size
     batch_size=128,
-
     use_mean=True,
-
-    # Threshold used to mark latent groups as "active".
-    # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
 )
 
 """
@@ -255,20 +229,6 @@ analysis_params = Hyperparams(
 
     # inference batch size (all modes)
     batch_size=32,
-
-    # Latent traversal mode
-    # --------------------
-    reconstruction=Hyperparams(
-        n_samples_for_reconstruction=3,
-        # The quantile at which to prune the latent space
-        # Example:
-        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-        # suitable value of variate_masks_quantile before running encoding mode.
-        mask_reconstruction=False,
-        variate_masks_quantile=0.03,
-    ),
 
     # Latent traversal mode
     # --------------------
@@ -301,20 +261,6 @@ analysis_params = Hyperparams(
         queries=dict(
         )
 
-    ),
-    gabor=Hyperparams(
-        queries=dict(
-        )
-    ),
-
-
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
     ),
 
     # Decodability mode
@@ -405,26 +351,26 @@ CUSTOM BLOCK HYPERPARAMETERS
 """
 # add your custom block hyperparameters here
 
-x_size = torch.prod(torch.tensor(data_params.shape))
-y_size = 250
+x_size = 20*20 # 400
+z_size = 500
 
 
 x_to_z_net = Hyperparams(
     type='mlp',
     input_size=x_size,
-    hidden_sizes=[2000],
-    output_size=2*y_size,
-    activation=torch.nn.ReLU(),
+    hidden_sizes=[500, 500],
+    output_size=2*z_size,
+    activation=torch.nn.Softplus(),
     residual=False,
     activate_output=True
 )
 
 z_to_x_net = Hyperparams(
     type='mlp',
-    input_size=y_size,
-    hidden_sizes=[2000],
-    output_size=2*x_size,
-    activation=torch.nn.ReLU(),
+    input_size=z_size,
+    hidden_sizes=[],
+    output_size=x_size,
+    activation=None,
     residual=False,
     activate_output=True
 )

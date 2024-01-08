@@ -1,5 +1,4 @@
 import subprocess
-import os
 import pickle
 
 from src.elements.dataset import _DataSet

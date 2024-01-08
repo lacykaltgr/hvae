@@ -1,6 +1,5 @@
 import numpy as np
 import tensorflow as tf
-import torch
 from sklearn.utils import shuffle
 
 from src.elements.dataset import _DataSet
