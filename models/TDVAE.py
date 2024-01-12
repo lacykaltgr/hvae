@@ -1,12 +1,10 @@
-from collections import OrderedDict
-
-
 def _model():
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten
+    from hvae_backbone.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import Flatten, Unflatten
+    from hvae_backbone.utils import OrderedModuleDict
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -39,7 +37,7 @@ def _model():
         ),
     )
 
-    _prior=OrderedDict(
+    _prior=dict(
         y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 
@@ -54,7 +52,7 @@ def _model():
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 
 """

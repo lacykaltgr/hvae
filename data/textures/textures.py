@@ -1,13 +1,13 @@
 import subprocess
 import pickle
 
-from src.elements.dataset import _DataSet
+from hvae_backbone.elements.dataset import DataSet
 import os
 
 root = "/Users/laszlofreund/code/ai/hvae/"
 
 
-class TexturesDataset(_DataSet):
+class TexturesDataset(DataSet):
     def __init__(self, type="natural", image_size=20, whitening="new", with_labels=False):
         self.type = type
         assert self.type in ["natural", "texture"]

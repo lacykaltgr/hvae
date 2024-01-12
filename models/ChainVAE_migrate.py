@@ -1,12 +1,12 @@
-from collections import OrderedDict
 import torch
 
 def _model(migration):
-    from src.hvae.block import SimpleGenBlock, InputBlock, OutputBlock, GenBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten, FixedStdDev
+    from hvae_backbone.block import SimpleGenBlock, InputBlock, OutputBlock, GenBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import Flatten, Unflatten, FixedStdDev
+    from hvae_backbone.utils import OrderedModuleDict
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -37,7 +37,7 @@ def _model(migration):
     )
 
     prior_shape = (1, 250)
-    _prior=OrderedDict(
+    _prior=dict(
         y_prior=torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
     )
     __model = hvae(
@@ -49,7 +49,7 @@ def _model(migration):
 
 
 def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
-    from src.elements.losses import get_kl_loss
+    from hvae_backbone.elements.losses import get_kl_loss
     kl_divergence = get_kl_loss()
 
     beta1 = 1
@@ -93,7 +93,7 @@ def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 """
 --------------------

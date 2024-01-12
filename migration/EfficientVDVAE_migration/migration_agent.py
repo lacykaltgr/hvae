@@ -4,9 +4,9 @@ import numpy as np
 
 import torch
 from .read_hparams.hparams import HParams
-from src.utils import SerializableSequential as Sequential
-from src.elements.nets import ConvNet
-from src.elements.layers import PoolLayer, UnPooLayer, Conv2d
+from hvae_backbone.utils import SerializableSequential as Sequential
+from hvae_backbone.elements.nets import ConvNet
+from hvae_backbone.elements.layers import PoolLayer, UnPooLayer, Conv2d
 
 
 class EfficientVDVAEMigrationAgent:

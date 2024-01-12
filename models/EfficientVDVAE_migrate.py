@@ -1,11 +1,9 @@
-from collections import OrderedDict
-
-
 def _model(migration):
-    from src.hvae.block import InputBlock, OutputBlock, SimpleBlock, ResidualGenBlock
-    from src.hvae.hvae import hVAE as hvae
+    from hvae_backbone.block import InputBlock, OutputBlock, SimpleBlock, ResidualGenBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.utils import OrderedModuleDict
 
-    _blocks = OrderedDict()
+    _blocks = OrderedModuleDict()
     _blocks.update({
         'x': InputBlock(net=migration.input_conv)
     })
@@ -98,7 +96,7 @@ def _model(migration):
             output_distribution='mol'
         )})
 
-    _prior = OrderedDict(
+    _prior = dict(
         top=torch.nn.Parameter(migration.trainable_h, requires_grad=True)
     )
 
@@ -113,7 +111,7 @@ def _model(migration):
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 
 """
@@ -284,7 +282,7 @@ LOSS HYPERPARAMETERS
 loss_params = Hyperparams(
     reconstruction_loss="default",
     kldiv_loss="default",
-    custom_loss=chainVAE_loss,
+    custom_loss=None,
 
     # ELBO beta warmup (from NVAE).
     # Doesn't make much of an effect

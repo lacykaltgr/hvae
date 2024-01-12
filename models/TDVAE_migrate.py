@@ -1,13 +1,13 @@
-from collections import OrderedDict
 import torch
 
 
 def _model(migration):
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten, FixedStdDev
+    from hvae_backbone.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import Flatten, Unflatten, FixedStdDev
+    from hvae_backbone.utils import OrderedModuleDict
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  # 0: batch-flatten, 1: sample-flatten
         ),
@@ -40,7 +40,7 @@ def _model(migration):
         ),
     )
 
-    _prior=OrderedDict(
+    _prior=dict(
         y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 
@@ -57,7 +57,7 @@ def _model(migration):
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 """
 --------------------
@@ -79,7 +79,6 @@ LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    dir='experiments/',
     name='TDVAE40_migrate',
 
     # TRAIN LOG
@@ -89,17 +88,8 @@ log_params = Hyperparams(
     eval_interval_in_steps=150,
 
     load_from_train=None,
-    dir_naming_scheme='timestamp',
-
-
-    # EVAL
-    # --------------------
-    load_from_eval='migration/2023-12-27__01-40/migrated_checkpoint.pth',
-
-
-    # SYNTHESIS
-    # --------------------
-    load_from_analysis='migration/2023-10-17__11-45/migrated_checkpoint.pth',
+    load_from_eval='/Users/laszlofreund/code/ai/hvae/experiments/TDVAE40_migrate/2024-01-12__15-28/migrated_checkpoint.pth',
+    #/Users/laszlofreund/code/ai/hvae/
 )
 
 """
@@ -122,12 +112,6 @@ model_params = Hyperparams(
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-
-    # Num of mixtures in the MoL layer
-    num_output_mixtures=3,
-    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
-    # Look at section 6 of the Efficient-VDVAE paper.
-    min_mol_logscale=-250.,
 )
 
 """
@@ -144,8 +128,6 @@ data_params = Hyperparams(
 
     # Image metadata
     shape=(1, 40, 40),
-    # Image color depth in the dataset (bit-depth of each color channel)
-    num_bits=8.,
 )
 
 """
@@ -178,8 +160,8 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=.05e-3
-    ,
+    learning_rate=.05e-3,
+
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
@@ -261,6 +243,7 @@ eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
     n_samples_for_validation=64000,
+    n_samples_for_reconstruction=4,
     # validation batch size
     batch_size=128,
 
@@ -326,20 +309,6 @@ analysis_params = Hyperparams(
         queries=dict(
         )
 
-    ),
-    gabor=Hyperparams(
-        queries=dict(
-        )
-    ),
-
-
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
     ),
 
     # Decodability mode

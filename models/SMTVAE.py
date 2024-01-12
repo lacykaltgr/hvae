@@ -1,12 +1,13 @@
-from src.utils import SerializableModule, OrderedModuleDict
 import torch
+from hvae_backbone.utils import SerializableModule
 
 
 def _model():
-    from src.hvae.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
-    from src.hvae.sequence import hSequenceVAE
-    from src.elements.layers import Conv2d, Slice, FixedStdDev
-    from src.utils import SharedSerializableSequential as Shared
+    from hvae_backbone.block import GenBlock, InputBlock, OutputBlock, SimpleBlock
+    from hvae_backbone.sequence import hSequenceVAE
+    from hvae_backbone.elements.layers import Conv2d, Slice, FixedStdDev
+    from hvae_backbone.utils import SharedSerializableSequential as Shared
+    from hvae_backbone.utils import OrderedModuleDict
 
     shared_net = Shared(Conv2d(40, 4, 3, 1, 'SAME'))
 
@@ -78,7 +79,7 @@ class ProductOfExperts(SerializableModule):
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 """
 --------------------

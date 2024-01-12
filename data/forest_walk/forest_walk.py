@@ -1,12 +1,12 @@
 import numpy as np
 import cv2
 import os
+from hvae_backbone.elements.dataset import DataSet
 
-from src.elements.dataset import _DataSet
 root = "/Users/laszlofreund/code/ai/hvae/data/forest_walk/"
 
 
-class ForestVideoDataset(_DataSet):
+class ForestVideoDataset(DataSet):
     def __init__(self, seq_len, n_frames, frame_rate=2, patch_size=20, whiten=False, n_downsamples=2, with_labels=False):
         self.patch_size = patch_size
         self.frame_rate = frame_rate

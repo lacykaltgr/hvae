@@ -1,10 +1,9 @@
-from src.utils import OrderedModuleDict
-
-
 def _model():
-    from src.hvae.block import InputBlock, ContrastiveOutputBlock, GenBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, FixedStdDev, RandomScaler, Unflatten
+    from hvae_backbone.block import InputBlock, GenBlock
+    from custom.blocks import ContrastiveOutputBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import Flatten, FixedStdDev, RandomScaler, Unflatten
+    from hvae_backbone.utils import OrderedModuleDict
 
     _blocks = OrderedModuleDict(
         x=InputBlock(
@@ -37,56 +36,11 @@ def _model():
     return __model
 
 
-import torch
-def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
-    from src.elements.losses import get_kl_loss
-    kl_divergence = get_kl_loss()
-
-    beta1 = 1
-    beta2 = 1
-
-    q_z1_x =    distributions['hiddens'][0]
-    z1_sample = q_z1_x.sample()
-    p_z2_z1 =   distributions['y'][0]
-    q_z2_z1 =   distributions['y'][1]
-    p_z1_z2 =   distributions['z'][0]
-    p_x_z1 =    distributions['output'][0]
-
-    nll = torch.mean(-p_x_z1.log_prob(targets))
-
-    avg_var_prior_losses = []
-
-    reg1 = torch.mean(-q_z1_x.entropy())
-    reg1 += torch.mean(-p_z1_z2.log_prob(z1_sample))
-    reg1 *= beta1
-
-    avg_var_prior_losses.append(reg1)
-
-    kl2, avg_kl2 = kl_divergence(q_z2_z1, p_z2_z1)
-    kl2 = torch.mean(kl2)
-    kl2 *= beta2
-
-    avg_var_prior_losses.append(avg_kl2)
-
-    kl_div = reg1 + kl2
-    elbo = nll + kl_div
-
-    return dict(
-        # benne kell legyen
-        elbo=elbo,
-        kl_div=kl_div,
-        reconstruction_loss=nll,
-
-        # optional
-        avg_reconstruction_loss=nll,
-        avg_var_prior_losses=avg_var_prior_losses,
-    )
-
 
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 
 """

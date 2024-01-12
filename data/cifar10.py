@@ -2,10 +2,10 @@ import numpy as np
 import tensorflow as tf
 from sklearn.utils import shuffle
 
-from src.elements.dataset import _DataSet
+from hvae_backbone.elements.dataset import DataSet
 
 
-class CIFARDataset(_DataSet):
+class CIFARDataset(DataSet):
     def __init__(self):
         super(CIFARDataset).__init__()
 

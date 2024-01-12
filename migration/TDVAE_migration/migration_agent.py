@@ -1,6 +1,6 @@
 import tensorflow as tf
 import torch
-from src.elements.nets import MLPNet
+from hvae_backbone.elements.nets import MLPNet
 
 
 class TDVAEMigrationAgent:

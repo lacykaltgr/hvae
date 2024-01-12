@@ -2,10 +2,10 @@ import numpy as np
 import tensorflow as tf
 from sklearn.utils import shuffle
 
-from src.elements.dataset import _DataSet
+from hvae_backbone.elements.dataset import DataSet
 
 
-class MNISTDataSet(_DataSet):
+class MNISTDataSet(DataSet):
     def __init__(self):
         super(MNISTDataSet, self).__init__()
 

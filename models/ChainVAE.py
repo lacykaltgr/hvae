@@ -1,12 +1,12 @@
-from collections import OrderedDict
 import torch
 
 def _model():
-    from src.hvae.block import SimpleGenBlock, InputBlock, OutputBlock, GenBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import Flatten, Unflatten
+    from hvae_backbone.block import SimpleGenBlock, InputBlock, OutputBlock, GenBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import Flatten, Unflatten
+    from hvae_backbone.utils import OrderedModuleDict
 
-    _blocks = OrderedDict(
+    _blocks = OrderedModuleDict(
         x=InputBlock(
             net=Flatten(start_dim=1),  #0: batch-flatten, 1: sample-flatten
         ),
@@ -34,9 +34,9 @@ def _model():
         ),
     )
 
-    prior_shape = (1, 250)
-    _prior=OrderedDict(
-        y_prior=torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
+    prior_shape = (250, )
+    _prior=dict(
+        y_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0),
     )
 
     __model = hvae(
@@ -48,7 +48,7 @@ def _model():
 
 
 def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
-    from src.elements.losses import get_kl_loss
+    from hvae_backbone.elements.losses import get_kl_loss
     kl_divergence = get_kl_loss()
 
     beta1 = 1
@@ -92,7 +92,7 @@ def chainVAE_loss(targets: torch.tensor, distributions: dict, **kwargs) -> dict:
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 
 """

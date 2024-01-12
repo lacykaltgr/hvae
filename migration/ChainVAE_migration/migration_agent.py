@@ -3,8 +3,8 @@ import os
 import json
 import tensorflow as tf
 
-from migration.ChainVAE_migration.utils.models import VAE_model, nested_model_summary, shared_NN
-from src.elements.nets import MLPNet
+from migration.ChainVAE_migration.utils.models import VAE_model, shared_NN
+from hvae_backbone.elements.nets import MLPNet
 
 class ChainVAEMigrationAgent:
 

@@ -1,10 +1,8 @@
-from src.utils import OrderedModuleDict
-
-
 def _model():
-    from src.hvae.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
-    from src.hvae.hvae import hVAE as hvae
-    from src.elements.layers import FixedStdDev, Flatten, Unflatten
+    from hvae_backbone.block import InputBlock, GenBlock, SimpleBlock, OutputBlock
+    from hvae_backbone.hvae import hVAE as hvae
+    from hvae_backbone.elements.layers import FixedStdDev, Flatten, Unflatten
+    from hvae_backbone.utils import OrderedModuleDict
 
     _blocks = OrderedModuleDict(
         x=InputBlock(),
@@ -51,7 +49,7 @@ def _model():
 # --------------------------------------------------
 # HYPERPAEAMETERS
 # --------------------------------------------------
-from src.hparams import Hyperparams
+from hvae_backbone import Hyperparams
 
 
 """
