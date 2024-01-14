@@ -52,7 +52,7 @@ def _model(migration):
         ),
     )
 
-    _prior = OrderedModuleDict(
+    _prior = dict(
         y_prior=torch.ones(1, 2)
     )
 

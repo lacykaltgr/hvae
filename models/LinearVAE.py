@@ -23,7 +23,7 @@ def _model():
     )
 
     prior_shape = (450, )
-    _prior = OrderedModuleDict(
+    _prior = dict(
         z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0).to("cuda")
     )
 

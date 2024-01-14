@@ -41,7 +41,7 @@ def _model(migration):
         ),
     )
 
-    _prior=OrderedModuleDict(
+    _prior=dict(
         y_prior=torch.cat((torch.zeros(250, ), torch.ones(250, )), dim=0)
     )
 
