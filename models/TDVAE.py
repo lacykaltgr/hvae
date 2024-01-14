@@ -37,7 +37,7 @@ def _model():
         ),
     )
 
-    _prior=dict(
+    _prior=OrderedModuleDict(
         y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 

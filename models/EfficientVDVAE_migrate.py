@@ -96,7 +96,7 @@ def _model(migration):
             output_distribution='mol'
         )})
 
-    _prior = dict(
+    _prior = OrderedModuleDict(
         top=torch.nn.Parameter(migration.trainable_h, requires_grad=True)
     )
 

@@ -37,7 +37,7 @@ def _model(migration):
     )
 
     prior_shape = (1, 250)
-    _prior=dict(
+    _prior=OrderedModuleDict(
         y_prior=torch.ccat([torch.zeros(prior_shape),torch.ones(prior_shape)], 1),
     )
     __model = hvae(

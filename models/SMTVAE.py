@@ -48,7 +48,7 @@ def _model():
         ),
     )
 
-    _init = dict(
+    _init = OrderedModuleDict(
         _h_manifold=torch.zeros(size=(4, 10, 10)),
         _h=torch.zeros(size=(4, 10, 10)),
         _z=torch.zeros(size=(40, 10, 10)),

@@ -22,9 +22,9 @@ def _model():
         ),
     )
 
-    prior_shape = (500, )
-    _prior = dict(
-        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0)
+    prior_shape = (450, )
+    _prior = OrderedModuleDict(
+        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0).to("cuda")
     )
 
     __model = hvae(
@@ -51,8 +51,8 @@ log_params = Hyperparams(
     # TRAIN LOG
     # --------------------
     # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
-    checkpoint_interval_in_steps=150,
-    eval_interval_in_steps=150,
+    checkpoint_interval_in_steps=3000,
+    eval_interval_in_steps=3000,
 
     load_from_train=None,
     load_from_eval='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
@@ -66,7 +66,7 @@ MODEL HYPERPARAMETERS
 
 model_params = Hyperparams(
     model=_model,
-    device='cpu',
+    device='cuda',
     seed=420,
 
     # Latent layer distribution base can be in ('std', 'logstd').
@@ -124,8 +124,8 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=.05e-3
-    ,
+    learning_rate=0.001,
+
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
@@ -177,11 +177,11 @@ loss_params = Hyperparams(
     # but it's safe to use it to avoid posterior collapses as NVAE suggests.
     # lambda of variational prior loss
     # schedule can be in ('None', 'Logistic', 'Linear')
-    variation_schedule='None',
+    variation_schedule='Linear',
 
     # linear beta schedule
-    vae_beta_anneal_start=21,
-    vae_beta_anneal_steps=5000,
+    vae_beta_anneal_start=24000,
+    vae_beta_anneal_steps=30000,
     vae_beta_min=1e-4,
 
     # logistic beta schedule
@@ -206,12 +206,12 @@ EVALUATION HYPERPARAMETERS
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    n_samples_for_validation=5000,
-    n_samples_for_reconstruction=3,
+    n_samples_for_validation=10000,
+    n_samples_for_reconstruction=4,
 
     # validation batch size
     batch_size=128,
-    use_mean=True,
+    use_mean=False,
 )
 
 """
@@ -350,7 +350,7 @@ CUSTOM BLOCK HYPERPARAMETERS
 # add your custom block hyperparameters here
 
 x_size = 20*20 # 400
-z_size = 500
+z_size = 450
 
 
 x_to_z_net = Hyperparams(
@@ -370,5 +370,5 @@ z_to_x_net = Hyperparams(
     output_size=x_size,
     activation=None,
     residual=False,
-    activate_output=True
+    activate_output=False
 )

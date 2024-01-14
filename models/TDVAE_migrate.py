@@ -40,7 +40,7 @@ def _model(migration):
         ),
     )
 
-    _prior=dict(
+    _prior=OrderedModuleDict(
         y_prior=torch.cat((torch.zeros(250), torch.ones(250)), dim=0)
     )
 
@@ -88,7 +88,7 @@ log_params = Hyperparams(
     eval_interval_in_steps=150,
 
     load_from_train=None,
-    load_from_eval='/Users/laszlofreund/code/ai/hvae/experiments/TDVAE40_migrate/2024-01-12__15-28/migrated_checkpoint.pth',
+    load_from_eval='/Users/laszlofreund/code/ai/hvae/experiments/TDVAE40_migrate/2024-01-14__13-47/migrated_checkpoint.pth',
     #/Users/laszlofreund/code/ai/hvae/
 )
 
@@ -239,15 +239,16 @@ loss_params = Hyperparams(
 EVALUATION HYPERPARAMETERS
 --------------------
 """
+import numpy as np
 eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
-    n_samples_for_validation=64000,
+    n_samples_for_validation=128,
     n_samples_for_reconstruction=4,
     # validation batch size
     batch_size=128,
 
-    use_mean=True
+    use_mean=False
 )
 
 """
