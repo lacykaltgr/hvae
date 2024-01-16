@@ -61,27 +61,13 @@ LOGGING HYPERPARAMETERS
 --------------------
 """
 log_params = Hyperparams(
-    dir='experiments/',
     name='TDVAE',
 
-    # TRAIN LOG
-    # --------------------
-    # Defines how often to save a model checkpoint and logs (tensorboard) to disk.
     checkpoint_interval_in_steps=150,
     eval_interval_in_steps=150,
 
     load_from_train=None,
-    dir_naming_scheme='timestamp',
-
-
-    # EVAL
-    # --------------------
     load_from_eval='path_to_directory/checkpoint.pth',
-
-
-    # SYNTHESIS
-    # --------------------
-    load_from_analysis='path_to_directory/checkpoint.pth',
 )
 
 """
@@ -104,12 +90,6 @@ model_params = Hyperparams(
     # Latent layer Gradient smoothing beta. ln(2) ~= 0.6931472.
     # Setting this parameter to 1. disables gradient smoothing (not recommended)
     gradient_smoothing_beta=0.6931472,
-
-    # Num of mixtures in the MoL layer
-    num_output_mixtures=3,
-    # Defines the minimum logscale of the MoL layer (exp(-250 = 0) so it's disabled).
-    # Look at section 6 of the Efficient-VDVAE paper.
-    min_mol_logscale=-250.,
 )
 
 """
@@ -126,8 +106,6 @@ data_params = Hyperparams(
 
     # Image metadata
     shape=(1, 40, 40),
-    # Image color depth in the dataset (bit-depth of each color channel)
-    num_bits=8.,
 )
 
 """
@@ -160,8 +138,8 @@ optimizer_params = Hyperparams(
     learning_rate_scheme='constant',
 
     # Defines the initial learning rate value
-    learning_rate=.05e-3
-    ,
+    learning_rate=.05e-3,
+
     # Adam/Radam/Adamax parameters
     beta1=0.9,
     beta2=0.999,
@@ -243,14 +221,12 @@ eval_params = Hyperparams(
     # Defines how many validation samples to validate on every time we're going to write to tensorboard
     # Reduce this number of faster validation. Very small subsets can be non descriptive of the overall distribution
     n_samples_for_validation=5000,
+    n_samples_for_reconstruction=4,
+
     # validation batch size
     batch_size=128,
 
     use_mean=True,
-
-    # Threshold used to mark latent groups as "active".
-    # Purely for debugging, shouldn't be taken seriously.
-    latent_active_threshold=1e-4
 )
 
 """
@@ -260,85 +236,67 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
-    ops=['reconstruction'],
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis', 'mei')
+    ops=['white_noise_analysis'],
 
     # inference batch size (all modes)
-    batch_size=32,
+    batch_size=128,
 
-    # Latent traversal mode
-    # --------------------
-    reconstruction=Hyperparams(
-        n_samples_for_reconstruction=3,
-        # The quantile at which to prune the latent space
-        # Example:
-        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-        # suitable value of variate_masks_quantile before running encoding mode.
-        mask_reconstruction=False,
-        variate_masks_quantile=0.03,
-    ),
-
-    # Latent traversal mode
-    # --------------------
-    latent_step_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                diff=1,
-                value=1,
-                n_dims=70,
-                n_cols=10,
-            )
-        )
-    ),
 
     # White noise analysis mode
     # --------------------
-    white_noise_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                n_samples=1000,
-                sigma=1.,
-                n_cols=10,
-            )
+    white_noise_analysis=dict(
+        z=dict(
+            n_samples=1000,
+            sigma=0.1,
         )
     ),
 
     # Most Exciting Input (MEI) mode
     # --------------------
-    mei=Hyperparams(
-        queries=dict(
+    mei=dict(
+        operation_name=dict(
+            # objective operation
+            # return dict -> {'objective': ..., 'activation': ...}
+            # or tensor -> activation
+            objective=lambda computed: dict(
+                objective=computed['x_hat'][0]
+            ),
+            # whether model should use mean or sample
+            use_mean=False,
+
+            # mei generation procedure
+            # can either be 'pixel', 'distribution' or 'transform'
+            type='pixel',
+
+            # mei generation parameters
+            config=dict()
         )
-
-    ),
-    gabor=Hyperparams(
-        queries=dict(
-        )
     ),
 
-
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
-    ),
 
     # Decodability mode
     # --------------------
 
-    decodability=Hyperparams(
-        model=None,
-        optimizer='Adam',
-        loss="bce",
-        epcohs=100,
-        learning_rate=1e-3,
-        batch_size=32,
-        decode_from=['z', 'y'],
+    decodability=dict(
+        decode_from_block=dict(
+            model=None,
+            optimizer='Adam',
+            loss="bce",
+            epcohs=100,
+            learning_rate=1e-3,
+            batch_size=32,
+        ),
+    ),
+
+
+    # Latent traversal mode
+    # --------------------
+    latent_step_analysis=dict(
+        z=dict(
+            diff=1,
+            value=1,
+        )
     ),
 
     # Generation_mode
@@ -381,31 +339,13 @@ mlp_params = Hyperparams(
 
 cnn_params = Hyperparams(
     type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=1.,
+    in_filters=1,
+    filters=[2, 3, 4],
     kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
-)
-
-pool_params = Hyperparams(
-    type='pool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-unpool_params = Hyperparams(
-    type='unpool',
-    in_filters=3,
-    filters=3,
-    strides=2,
+    pool_strides=0,
+    unpool_strides=0,
+    activation=torch.nn.ReLU(),
+    activate_output=False
 )
 
 

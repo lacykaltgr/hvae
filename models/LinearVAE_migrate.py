@@ -1,3 +1,5 @@
+import torch
+
 def _model(migration):
     from hvae_backbone.block import InputBlock, SimpleBlock, GenBlock, OutputBlock, SimpleGenBlock
     from hvae_backbone.hvae import hVAE as hvae
@@ -257,6 +259,7 @@ eval_params = Hyperparams(
     use_mean=True,
 )
 
+
 """
 --------------------
 SYNTHESIS HYPERPARAMETERS
@@ -264,20 +267,19 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
-    ops=['reconstruction'],
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis', 'mei')
+    ops=['white_noise_analysis'],
 
     # inference batch size (all modes)
-    batch_size=32,
+    batch_size=128,
 
 
     # White noise analysis mode
     # --------------------
     white_noise_analysis=dict(
-        target_block=dict(
+        z=dict(
             n_samples=1000,
-            sigma=1.,
+            sigma=0.1,
         )
     ),
 
@@ -322,13 +324,9 @@ analysis_params = Hyperparams(
     # Latent traversal mode
     # --------------------
     latent_step_analysis=dict(
-        queries=dict(
-            z=dict(
-                diff=1,
-                value=1,
-                n_dims=70,
-                n_cols=10,
-            )
+        z=dict(
+            diff=1,
+            value=1,
         )
     ),
 
@@ -351,61 +349,6 @@ analysis_params = Hyperparams(
     )
 )
 
-"""
---------------------
-BLOCK HYPERPARAMETERS
---------------------
-"""
-import torch
-# These are the default parameters,
-# use this for reference when creating custom blocks.
-
-mlp_params = Hyperparams(
-    type='mlp',
-    input_size=1000,
-    hidden_sizes=[],
-    output_size=1000,
-    activation=torch.nn.ReLU(),
-    residual=False,
-    activate_output=True
-)
-
-cnn_params = Hyperparams(
-    type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=1.,
-    kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
-)
-
-pool_params = Hyperparams(
-    type='pool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-unpool_params = Hyperparams(
-    type='unpool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-
-"""
---------------------
-CUSTOM BLOCK HYPERPARAMETERS
---------------------
-"""
-# add your custom block hyperparameters here
 
 
 

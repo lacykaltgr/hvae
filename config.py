@@ -4,7 +4,7 @@ def get_hparams():
     # SET WHICH params TO USE HERE
     # |    |    |    |    |    |
     # v    v    v    v    v    v
-    import models.TDVAE_migrate as params
+    import models.ConvLinearVAE40 as params
 
     config = Hyperparams(
         log_params=params.log_params,

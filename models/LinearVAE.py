@@ -214,6 +214,7 @@ eval_params = Hyperparams(
     use_mean=False,
 )
 
+
 """
 --------------------
 SYNTHESIS HYPERPARAMETERS
@@ -221,57 +222,67 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
-    ops=['reconstruction'],
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis', 'mei')
+    ops=['white_noise_analysis'],
 
     # inference batch size (all modes)
-    batch_size=32,
+    batch_size=128,
 
-    # Latent traversal mode
-    # --------------------
-    latent_step_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                diff=1,
-                value=1,
-                n_dims=70,
-                n_cols=10,
-            )
-        )
-    ),
 
     # White noise analysis mode
     # --------------------
-    white_noise_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                n_samples=1000,
-                sigma=1.,
-                n_cols=10,
-            )
+    white_noise_analysis=dict(
+        z=dict(
+            n_samples=1000,
+            sigma=0.1,
         )
     ),
 
     # Most Exciting Input (MEI) mode
     # --------------------
-    mei=Hyperparams(
-        queries=dict(
-        )
+    mei=dict(
+        operation_name=dict(
+            # objective operation
+            # return dict -> {'objective': ..., 'activation': ...}
+            # or tensor -> activation
+            objective=lambda computed: dict(
+                objective=computed['x_hat'][0]
+            ),
+            # whether model should use mean or sample
+            use_mean=False,
 
+            # mei generation procedure
+            # can either be 'pixel', 'distribution' or 'transform'
+            type='pixel',
+
+            # mei generation parameters
+            config=dict()
+        )
     ),
+
 
     # Decodability mode
     # --------------------
 
-    decodability=Hyperparams(
-        model=None,
-        optimizer='Adam',
-        loss="bce",
-        epcohs=100,
-        learning_rate=1e-3,
-        batch_size=32,
-        decode_from=['z', 'y'],
+    decodability=dict(
+        decode_from_block=dict(
+            model=None,
+            optimizer='Adam',
+            loss="bce",
+            epcohs=100,
+            learning_rate=1e-3,
+            batch_size=32,
+        ),
+    ),
+
+
+    # Latent traversal mode
+    # --------------------
+    latent_step_analysis=dict(
+        z=dict(
+            diff=1,
+            value=1,
+        )
     ),
 
     # Generation_mode
@@ -314,31 +325,13 @@ mlp_params = Hyperparams(
 
 cnn_params = Hyperparams(
     type="conv",
-    n_layers=2,
-    in_filters=3,
-    bottleneck_ratio=0.5,
-    output_ratio=1.,
+    in_filters=1,
+    filters=[2, 3, 4],
     kernel_size=3,
-    use_1x1=True,
-    init_scaler=1.,
-    pool_strides=False,
-    unpool_strides=False,
-    activation=None,
-    residual=False,
-)
-
-pool_params = Hyperparams(
-    type='pool',
-    in_filters=3,
-    filters=3,
-    strides=2,
-)
-
-unpool_params = Hyperparams(
-    type='unpool',
-    in_filters=3,
-    filters=3,
-    strides=2,
+    pool_strides=0,
+    unpool_strides=0,
+    activation=torch.nn.ReLU(),
+    activate_output=False
 )
 
 

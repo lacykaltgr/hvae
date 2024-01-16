@@ -265,84 +265,67 @@ SYNTHESIS HYPERPARAMETERS
 """
 analysis_params = Hyperparams(
     # The synthesized mode can be a subset of
-    # ('reconstruction', 'generation', div_stats', 'decodability', 'white_noise_analysis', 'latent_step_analysis')
-    # in development: 'mei', 'gabor'
-    ops=['reconstruction'],
+    # ('generation', 'decodability', 'white_noise_analysis', 'latent_step_analysis', 'mei')
+    ops=['white_noise_analysis'],
 
     # inference batch size (all modes)
-    batch_size=32,
+    batch_size=128,
 
-    # Latent traversal mode
-    # --------------------
-    reconstruction=Hyperparams(
-        n_samples_for_reconstruction=3,
-        # The quantile at which to prune the latent space
-        # Example:
-        # variate_masks_quantile = 0.03 means only 3% of the posteriors that encode the most information will be
-        # preserved, all the others will be replaced with the prior. Encoding mode will always automatically prune the
-        # latent space using this argument, so it's a good idea to run masked reconstruction (read below) to find a
-        # suitable value of variate_masks_quantile before running encoding mode.
-        mask_reconstruction=False,
-        variate_masks_quantile=0.03,
-    ),
-
-    # Latent traversal mode
-    # --------------------
-    latent_step_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                diff=1,
-                value=1,
-                n_dims=70,
-                n_cols=10,
-            )
-        )
-    ),
 
     # White noise analysis mode
     # --------------------
-    white_noise_analysis=Hyperparams(
-        queries=dict(
-            z=dict(
-                n_samples=1000,
-                sigma=1.,
-                n_cols=10,
-            )
+    white_noise_analysis=dict(
+        z=dict(
+            n_samples=1000,
+            sigma=0.1,
         )
     ),
 
     # Most Exciting Input (MEI) mode
     # --------------------
-    mei=Hyperparams(
-        queries=dict(
-        )
+    mei=dict(
+        operation_name=dict(
+            # objective operation
+            # return dict -> {'objective': ..., 'activation': ...}
+            # or tensor -> activation
+            objective=lambda computed: dict(
+                objective=computed['x_hat'][0]
+            ),
+            # whether model should use mean or sample
+            use_mean=False,
 
-    ),
-    gabor=Hyperparams(
-        queries=dict(
+            # mei generation procedure
+            # can either be 'pixel', 'distribution' or 'transform'
+            type='pixel',
+
+            # mei generation parameters
+            config=dict()
         )
     ),
 
-    # Div_stats mode
-    # --------------------
-    div_stats=Hyperparams(
-        # Defines the ratio of the training data to compute the average KL per variate on (used for masked
-        # reconstruction and encoding). Set to 1. to use the full training dataset.
-        # But that' usually an overkill as 5%, 10% or 20% of the dataset tends to be representative enough.
-        div_stats_subset_ratio=0.2
-    ),
 
     # Decodability mode
     # --------------------
 
-    decodability=Hyperparams(
-        model=None,
-        optimizer='Adam',
-        loss="bce",
-        epcohs=100,
-        learning_rate=1e-3,
-        batch_size=32,
-        decode_from=['z', 'y'],
+    decodability=dict(
+        decode_from_block=dict(
+            model=None,
+            optimizer='Adam',
+            loss="bce",
+            epcohs=100,
+            learning_rate=1e-3,
+            batch_size=32,
+        ),
+    ),
+
+
+    # Latent traversal mode
+    # --------------------
+    latent_step_analysis=dict(
+        z=dict(
+            diff=1,
+            value=1,
+        )
     ),
 
     # Generation_mode
