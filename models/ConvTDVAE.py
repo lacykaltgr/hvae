@@ -339,8 +339,7 @@ x_to_hiddens = Hyperparams(
     in_filters=1,
     filters=[5, 5],
     kernel_size=3,
-    pool_strides=1,
-    unpool_strides=0,
+    pools=[0],
     activation=torch.nn.Softplus(),
     activate_output=True
 )
@@ -350,8 +349,7 @@ hiddens_to_y = Hyperparams(
     in_filters=5,
     filters=[8, 8],
     kernel_size=3,
-    pool_strides=1,
-    unpool_strides=0,
+    pools=[0],
     activation=torch.nn.Softplus(),
     activate_output=False
 )
@@ -381,8 +379,7 @@ y_concat = Hyperparams(
     in_filters=4,
     filters=[5, 5],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=1,
+    pools=[],
     activation=torch.nn.Softplus(),
     activate_output=False
 )
@@ -402,8 +399,7 @@ z_prior = Hyperparams(
     in_filters=4,
     filters=[5, 10],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=1,
+    pools=[],
     activation=torch.nn.Softplus(),
     activate_output=False
 )
@@ -413,8 +409,7 @@ z_posterior = Hyperparams(
     in_filters=10,
     filters=[10, 10],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=0,
+    pools=[],
     activation=torch.nn.Softplus(),
     activate_output=False
 )
@@ -425,8 +420,7 @@ z_to_x = Hyperparams(
     in_filters=5,
     filters=[3, 1],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=1,
+    pools=[],
     activation=torch.nn.Softplus(),
     activate_output=False
 )

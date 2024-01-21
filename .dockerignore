@@ -3,3 +3,4 @@
 # Exclude all 'datasets' directories within 'data'
 data/*/datasets/
 migration/
+Dockerfile

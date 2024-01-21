@@ -330,11 +330,10 @@ mlp_params = Hyperparams(
 cnn_params = Hyperparams(
     type="conv",
     in_filters=1,
-    filters=[2, 3, 4],
+    filters=[25, 25, 40],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=0,
-    activation=torch.nn.ReLU(),
+    pools=[0],
+    activation=torch.nn.Softplus(),
     activate_output=False
 )
 
@@ -356,10 +355,7 @@ x_to_z_net = Hyperparams(
     in_filters=1,
     filters=[25, 25, 40],
     kernel_size=3,
-
-    pool_strides=2,
-    unpool_strides=0,
-
+    pools=[0, 1],
     activation=torch.nn.Softplus(),
     activate_output=False
 )

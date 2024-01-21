@@ -359,7 +359,7 @@ x_to_sparse = Hyperparams(
     in_filters=1,
     filters=[10, 40, 80],
     kernel_size=3,
-    pool_strides=2,
+    pools=[0, 1],
     unpool_strides=0,
     activation=torch.nn.Softplus(),
     activate_output=False
@@ -370,8 +370,6 @@ manifold_recon = Hyperparams(
     in_filters=4,
     filters=[10, 40, 80],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=0,
     activation=torch.nn.Softplus(),
     activate_output=False
 )
@@ -381,19 +379,16 @@ z_posterior = Hyperparams(
     in_filters=160,
     filters=[160, 120, 80],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=0,
     activation=torch.nn.Softplus(),
     activate_output=False
 )
 
 z_to_x = Hyperparams(
-    type="conv",
+    type="deconv",
     in_filters=40,
     filters=[40, 10, 4, 1],
     kernel_size=3,
-    pool_strides=0,
-    unpool_strides=2,
+    unpools=[0, 1],
     activation=torch.nn.Softplus(),
     activate_output=False
 )
