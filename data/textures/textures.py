@@ -4,7 +4,7 @@ import pickle
 from hvae_backbone.elements.dataset import DataSet
 import os
 
-root = "/Users/laszlofreund/code/ai/hvae/"
+root = "/app/"
 
 
 class TexturesDataset(DataSet):
