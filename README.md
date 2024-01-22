@@ -10,8 +10,8 @@ For installation, use it as a template for creating your custom hVAE repository.
 ```bash
 cd path_to_repo/hvae
 docker build -t hvae_docker .
-docker docker run --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -p 8880:8888 -d  YOUR_IMAGE_ID
-ssh -N -L localhost:8880:localhost:8880 <usename> @<your_server_ip>
+docker run --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -p 8880:8888 -d  YOUR_IMAGE_ID
+ssh -N -L localhost:8880:localhost:8880 <username>@<your_server_ip>
 ```
 A JupyterLab server will be created automatically on the notebook image. 
 The server can be accessed through ssh tunneling. You can find it on **localhost:8880** on your local computer.
