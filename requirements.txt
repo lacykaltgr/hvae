@@ -6,4 +6,3 @@ torch~=2.1.1
 wandb
 torchinfo
 hvae_backbone
-```
