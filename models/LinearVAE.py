@@ -24,7 +24,7 @@ def _model():
 
     prior_shape = (450, )
     _prior = dict(
-        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0).to("cuda")
+        z_prior=torch.cat([torch.zeros(prior_shape), torch.ones(prior_shape)], 0)
     )
 
     __model = hvae(
@@ -55,7 +55,7 @@ log_params = Hyperparams(
     eval_interval_in_steps=3000,
 
     load_from_train=None,
-    load_from_eval='2023-09-23__16-12/checkpoints/checkpoint-750.pth',
+    load_from_eval='csnl/LinearVAE40_balazs/LinearVAE40_balazs:v111',
 )
 
 """
@@ -66,7 +66,7 @@ MODEL HYPERPARAMETERS
 
 model_params = Hyperparams(
     model=_model,
-    device='cuda',
+    device='cpu',
     seed=420,
 
     # Latent layer distribution base can be in ('std', 'logstd').
@@ -91,7 +91,7 @@ data_params = Hyperparams(
     params=dict(type="natural", image_size=20, whitening="old"),
 
     # Image metadata
-    shape=(1, 20, 20),
+    shape=(1, 40, 40),
 )
 
 """
@@ -194,7 +194,6 @@ loss_params = Hyperparams(
     # Gamma schedule of variational loss
     use_gamma_schedule=False,
     gamma_max_steps=10000,
-    scaled_gamma=True,
     gamma_n_groups=100,
 )
 
